@@ -23,6 +23,7 @@
     "lib/liteskill/repo.ex",
     "lib/liteskill.ex",
     "lib/liteskill/application.ex",
-    "test/support/"
+    "test/support/",
+    "deps/"
   ]
 }

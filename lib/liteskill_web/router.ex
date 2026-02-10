@@ -48,6 +48,8 @@ defmodule LiteskillWeb.Router do
       live "/", ChatLive, :index
       live "/c/:conversation_id", ChatLive, :show
       live "/mcp", ChatLive, :mcp_servers
+      live "/reports", ChatLive, :reports
+      live "/reports/:report_id", ChatLive, :report_show
     end
   end
 

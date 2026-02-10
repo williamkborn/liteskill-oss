@@ -24,8 +24,21 @@ import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/liteskill"
 import topbar from "../vendor/topbar"
+import {SectionEditor} from "./codemirror_hook"
 
 const Hooks = {
+  SectionEditor,
+
+  SidebarNav: {
+    mounted() {
+      this.handleEvent("nav", () => {
+        if (window.innerWidth < 640) {
+          this.pushEvent("close_sidebar", {})
+        }
+      })
+    }
+  },
+
   ScrollBottom: {
     mounted() {
       this.scrollToBottom()
@@ -70,6 +83,20 @@ const Hooks = {
           })
         })
         pre.appendChild(btn)
+      })
+    }
+  },
+
+  DownloadMarkdown: {
+    mounted() {
+      this.handleEvent("download_markdown", ({filename, content}) => {
+        const blob = new Blob([content], {type: "text/markdown"})
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement("a")
+        a.href = url
+        a.download = filename
+        a.click()
+        URL.revokeObjectURL(url)
       })
     }
   },

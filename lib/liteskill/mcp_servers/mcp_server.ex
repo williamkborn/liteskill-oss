@@ -12,7 +12,7 @@ defmodule Liteskill.McpServers.McpServer do
   schema "mcp_servers" do
     field :name, :string
     field :url, :string
-    field :api_key, :string
+    field :api_key, Liteskill.Crypto.EncryptedField
     field :description, :string
     field :headers, :map, default: %{}
     field :status, :string, default: "active"

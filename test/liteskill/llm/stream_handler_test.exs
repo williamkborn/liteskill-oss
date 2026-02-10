@@ -231,6 +231,34 @@ defmodule Liteskill.LLM.StreamHandlerTest do
     assert "AssistantStreamCompleted" in event_types
   end
 
+  test "returns error when max tool rounds exceeded", %{conversation: conv} do
+    stream_id = conv.stream_id
+
+    # Simulate being at the max tool round limit
+    assert {:error, :max_tool_rounds_exceeded} =
+             StreamHandler.handle_stream(stream_id, [%{role: :user, content: "test"}],
+               tool_round: 10,
+               max_tool_rounds: 10
+             )
+  end
+
+  test "allows stream when under max tool rounds", %{conversation: conv} do
+    Req.Test.stub(Liteskill.LLM.BedrockClient, fn conn ->
+      conn |> Plug.Conn.send_resp(200, "")
+    end)
+
+    stream_id = conv.stream_id
+
+    assert :ok =
+             StreamHandler.handle_stream(stream_id, [%{role: :user, content: "test"}],
+               tool_round: 5,
+               max_tool_rounds: 10,
+               plug: {Req.Test, Liteskill.LLM.BedrockClient}
+             )
+
+    Process.sleep(200)
+  end
+
   test "stream without tools does not include toolConfig", %{conversation: conv} do
     Req.Test.stub(Liteskill.LLM.BedrockClient, fn conn ->
       {:ok, body, conn} = Plug.Conn.read_body(conn)

@@ -57,6 +57,28 @@ defmodule LiteskillWeb.ConversationControllerTest do
       assert %{"data" => conversations} = json_response(conn, 200)
       assert length(conversations) == 1
     end
+
+    test "handles non-numeric limit gracefully", %{conn: conn, user: user} do
+      {:ok, _} = Liteskill.Chat.create_conversation(%{user_id: user.id, title: "Chat"})
+
+      conn = get(conn, ~p"/api/conversations?limit=abc&offset=xyz")
+      assert %{"data" => _conversations} = json_response(conn, 200)
+    end
+
+    test "clamps limit to maximum", %{conn: conn, user: user} do
+      {:ok, _} = Liteskill.Chat.create_conversation(%{user_id: user.id, title: "Chat"})
+
+      conn = get(conn, ~p"/api/conversations?limit=999999")
+      assert %{"data" => _conversations} = json_response(conn, 200)
+    end
+
+    test "handles negative offset gracefully", %{conn: conn, user: user} do
+      {:ok, _} = Liteskill.Chat.create_conversation(%{user_id: user.id, title: "Chat"})
+
+      # Negative values fall through to default
+      conn = get(conn, ~p"/api/conversations?offset=-1")
+      assert %{"data" => _conversations} = json_response(conn, 200)
+    end
   end
 
   describe "create" do

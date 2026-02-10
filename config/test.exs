@@ -29,6 +29,9 @@ config :swoosh, :api_client, false
 # Print only warnings and errors during test
 config :logger, level: :warning
 
+# Encryption key for sensitive fields (API keys, etc.)
+config :liteskill, :encryption_key, "test-only-encryption-key-do-not-use-in-prod"
+
 # Fast Argon2 hashing for tests
 config :argon2_elixir, t_cost: 1, m_cost: 8
 
@@ -42,3 +45,5 @@ config :phoenix_live_view,
 # Sort query params output of verified routes for robust url comparisons
 config :phoenix,
   sort_verified_routes_query_params: true
+
+config :liteskill, Oban, testing: :manual

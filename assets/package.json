@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "dependencies": {
+    "codemirror": "^6.0.0",
+    "@codemirror/lang-markdown": "^6.0.0",
+    "@codemirror/language-data": "^6.0.0"
+  }
+}

@@ -381,6 +381,56 @@ defmodule Liteskill.Chat.ProjectorTest do
     assert conv.status == "active"
   end
 
+  test "handles events for missing conversation gracefully" do
+    # Project an event for a stream that has no ConversationCreated projection.
+    # The projector should log a warning and not crash.
+    fake_stream_id = "conversation-#{Ecto.UUID.generate()}"
+
+    {:ok, events} =
+      Store.append_events(fake_stream_id, 0, [
+        %{
+          event_type: "UserMessageAdded",
+          data: %{
+            "message_id" => Ecto.UUID.generate(),
+            "content" => "Orphan message",
+            "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
+          }
+        }
+      ])
+
+    # Should not raise — the projector should skip gracefully
+    Projector.project_events(fake_stream_id, events)
+    Process.sleep(100)
+
+    # Projector should still be alive
+    assert Process.alive?(Process.whereis(Liteskill.Chat.Projector))
+  end
+
+  test "handles ToolCallCompleted for missing tool call gracefully" do
+    # ToolCallCompleted for a tool_use_id that doesn't exist in projections
+    fake_stream_id = "conversation-#{Ecto.UUID.generate()}"
+
+    {:ok, events} =
+      Store.append_events(fake_stream_id, 0, [
+        %{
+          event_type: "ToolCallCompleted",
+          data: %{
+            "tool_use_id" => "nonexistent-tool-#{System.unique_integer([:positive])}",
+            "input" => %{},
+            "output" => %{"result" => "ok"},
+            "duration_ms" => 10,
+            "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
+          }
+        }
+      ])
+
+    # Should not raise
+    Projector.project_events(fake_stream_id, events)
+    Process.sleep(100)
+
+    assert Process.alive?(Process.whereis(Liteskill.Chat.Projector))
+  end
+
   test "handles info messages that are not events" do
     # The projector GenServer should handle unexpected messages
     send(Liteskill.Chat.Projector, :unexpected_message)

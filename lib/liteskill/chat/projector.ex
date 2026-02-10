@@ -8,6 +8,8 @@ defmodule Liteskill.Chat.Projector do
 
   use GenServer
 
+  require Logger
+
   alias Liteskill.Chat.{Conversation, Message, MessageChunk, ToolCall}
   alias Liteskill.EventStore.Event
   alias Liteskill.Repo
@@ -82,28 +84,28 @@ defmodule Liteskill.Chat.Projector do
          stream_id: stream_id,
          stream_version: version
        }) do
-    conversation = Repo.one!(from c in Conversation, where: c.stream_id == ^stream_id)
+    with_conversation(stream_id, fn conversation ->
+      message_count = conversation.message_count + 1
 
-    message_count = conversation.message_count + 1
+      %Message{}
+      |> Message.changeset(%{
+        id: data["message_id"],
+        conversation_id: conversation.id,
+        role: "user",
+        content: data["content"],
+        status: "complete",
+        position: message_count,
+        stream_version: version
+      })
+      |> Repo.insert!(on_conflict: :nothing)
 
-    %Message{}
-    |> Message.changeset(%{
-      id: data["message_id"],
-      conversation_id: conversation.id,
-      role: "user",
-      content: data["content"],
-      status: "complete",
-      position: message_count,
-      stream_version: version
-    })
-    |> Repo.insert!(on_conflict: :nothing)
-
-    conversation
-    |> Conversation.changeset(%{
-      message_count: message_count,
-      last_message_at: DateTime.utc_now() |> DateTime.truncate(:second)
-    })
-    |> Repo.update!()
+      conversation
+      |> Conversation.changeset(%{
+        message_count: message_count,
+        last_message_at: DateTime.utc_now() |> DateTime.truncate(:second)
+      })
+      |> Repo.update!()
+    end)
   end
 
   defp project_event(%Event{
@@ -112,29 +114,29 @@ defmodule Liteskill.Chat.Projector do
          stream_id: stream_id,
          stream_version: version
        }) do
-    conversation = Repo.one!(from c in Conversation, where: c.stream_id == ^stream_id)
+    with_conversation(stream_id, fn conversation ->
+      message_count = conversation.message_count + 1
 
-    message_count = conversation.message_count + 1
+      %Message{}
+      |> Message.changeset(%{
+        id: data["message_id"],
+        conversation_id: conversation.id,
+        role: "assistant",
+        content: "",
+        status: "streaming",
+        model_id: data["model_id"],
+        position: message_count,
+        stream_version: version
+      })
+      |> Repo.insert!(on_conflict: :nothing)
 
-    %Message{}
-    |> Message.changeset(%{
-      id: data["message_id"],
-      conversation_id: conversation.id,
-      role: "assistant",
-      content: "",
-      status: "streaming",
-      model_id: data["model_id"],
-      position: message_count,
-      stream_version: version
-    })
-    |> Repo.insert!(on_conflict: :nothing)
-
-    conversation
-    |> Conversation.changeset(%{
-      message_count: message_count,
-      status: "streaming"
-    })
-    |> Repo.update!()
+      conversation
+      |> Conversation.changeset(%{
+        message_count: message_count,
+        status: "streaming"
+      })
+      |> Repo.update!()
+    end)
   end
 
   defp project_event(%Event{event_type: "AssistantChunkReceived", data: data}) do
@@ -157,7 +159,6 @@ defmodule Liteskill.Chat.Projector do
          stream_id: stream_id
        }) do
     message = Repo.get!(Message, data["message_id"])
-    conversation = Repo.one!(from c in Conversation, where: c.stream_id == ^stream_id)
 
     input_tokens = data["input_tokens"]
     output_tokens = data["output_tokens"]
@@ -177,12 +178,14 @@ defmodule Liteskill.Chat.Projector do
     })
     |> Repo.update!()
 
-    conversation
-    |> Conversation.changeset(%{
-      status: "active",
-      last_message_at: DateTime.utc_now() |> DateTime.truncate(:second)
-    })
-    |> Repo.update!()
+    with_conversation(stream_id, fn conversation ->
+      conversation
+      |> Conversation.changeset(%{
+        status: "active",
+        last_message_at: DateTime.utc_now() |> DateTime.truncate(:second)
+      })
+      |> Repo.update!()
+    end)
   end
 
   defp project_event(%Event{
@@ -190,11 +193,11 @@ defmodule Liteskill.Chat.Projector do
          data: data,
          stream_id: stream_id
        }) do
-    conversation = Repo.one!(from c in Conversation, where: c.stream_id == ^stream_id)
-
-    conversation
-    |> Conversation.changeset(%{status: "active"})
-    |> Repo.update!()
+    with_conversation(stream_id, fn conversation ->
+      conversation
+      |> Conversation.changeset(%{status: "active"})
+      |> Repo.update!()
+    end)
 
     # Mark the streaming message as failed
     if data["message_id"] do
@@ -223,31 +226,34 @@ defmodule Liteskill.Chat.Projector do
   end
 
   defp project_event(%Event{event_type: "ToolCallCompleted", data: data}) do
-    tool_call =
-      Repo.one!(from tc in ToolCall, where: tc.tool_use_id == ^data["tool_use_id"])
+    case Repo.one(from tc in ToolCall, where: tc.tool_use_id == ^data["tool_use_id"]) do
+      nil ->
+        Logger.warning("ToolCall not found for tool_use_id=#{data["tool_use_id"]}, skipping")
 
-    tool_call
-    |> ToolCall.changeset(%{
-      input: data["input"],
-      output: data["output"],
-      status: "completed",
-      duration_ms: data["duration_ms"]
-    })
-    |> Repo.update!()
+      tool_call ->
+        tool_call
+        |> ToolCall.changeset(%{
+          input: data["input"],
+          output: data["output"],
+          status: "completed",
+          duration_ms: data["duration_ms"]
+        })
+        |> Repo.update!()
+    end
   end
 
   defp project_event(%Event{event_type: "ConversationForked", data: data, stream_id: stream_id}) do
     parent =
       Repo.one(from c in Conversation, where: c.stream_id == ^data["parent_stream_id"])
 
-    conversation = Repo.one!(from c in Conversation, where: c.stream_id == ^stream_id)
-
-    conversation
-    |> Conversation.changeset(%{
-      parent_conversation_id: parent && parent.id,
-      fork_at_version: data["fork_at_version"]
-    })
-    |> Repo.update!()
+    with_conversation(stream_id, fn conversation ->
+      conversation
+      |> Conversation.changeset(%{
+        parent_conversation_id: parent && parent.id,
+        fork_at_version: data["fork_at_version"]
+      })
+      |> Repo.update!()
+    end)
   end
 
   defp project_event(%Event{
@@ -255,19 +261,19 @@ defmodule Liteskill.Chat.Projector do
          data: data,
          stream_id: stream_id
        }) do
-    conversation = Repo.one!(from c in Conversation, where: c.stream_id == ^stream_id)
-
-    conversation
-    |> Conversation.changeset(%{title: data["title"]})
-    |> Repo.update!()
+    with_conversation(stream_id, fn conversation ->
+      conversation
+      |> Conversation.changeset(%{title: data["title"]})
+      |> Repo.update!()
+    end)
   end
 
   defp project_event(%Event{event_type: "ConversationArchived", stream_id: stream_id}) do
-    conversation = Repo.one!(from c in Conversation, where: c.stream_id == ^stream_id)
-
-    conversation
-    |> Conversation.changeset(%{status: "archived"})
-    |> Repo.update!()
+    with_conversation(stream_id, fn conversation ->
+      conversation
+      |> Conversation.changeset(%{status: "archived"})
+      |> Repo.update!()
+    end)
   end
 
   defp project_event(_event), do: :ok
@@ -284,5 +290,17 @@ defmodule Liteskill.Chat.Projector do
       |> Repo.all()
       |> Enum.each(&project_event/1)
     end)
+  end
+
+  defp with_conversation(stream_id, fun) do
+    case Repo.one(from c in Conversation, where: c.stream_id == ^stream_id) do
+      nil ->
+        Logger.warning(
+          "Projector: conversation not found for stream #{stream_id}, skipping event"
+        )
+
+      conversation ->
+        fun.(conversation)
+    end
   end
 end

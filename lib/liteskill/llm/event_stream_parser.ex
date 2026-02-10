@@ -89,11 +89,16 @@ defmodule Liteskill.LLM.EventStreamParser do
     end
   end
 
-  defp event_type_atom("messageStart"), do: :message_start
-  defp event_type_atom("contentBlockStart"), do: :content_block_start
-  defp event_type_atom("contentBlockDelta"), do: :content_block_delta
-  defp event_type_atom("contentBlockStop"), do: :content_block_stop
-  defp event_type_atom("messageStop"), do: :message_stop
-  defp event_type_atom("metadata"), do: :metadata
-  defp event_type_atom(other), do: String.to_atom(other)
+  @known_event_types %{
+    "messageStart" => :message_start,
+    "contentBlockStart" => :content_block_start,
+    "contentBlockDelta" => :content_block_delta,
+    "contentBlockStop" => :content_block_stop,
+    "messageStop" => :message_stop,
+    "metadata" => :metadata
+  }
+
+  defp event_type_atom(event_type) do
+    Map.get(@known_event_types, event_type, :unknown)
+  end
 end

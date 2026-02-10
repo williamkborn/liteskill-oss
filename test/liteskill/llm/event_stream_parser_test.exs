@@ -131,10 +131,10 @@ defmodule Liteskill.LLM.EventStreamParserTest do
       assert events == []
     end
 
-    test "handles unknown event type with String.to_atom fallback" do
+    test "handles unknown event type safely without atom creation" do
       message = build_event_stream_message("customEvent", %{"data" => "value"})
       {events, _} = EventStreamParser.parse(message)
-      assert [{:customEvent, %{"data" => "value"}}] = events
+      assert [{:unknown, %{"data" => "value"}}] = events
     end
 
     test "handles headers without :event-type" do

@@ -398,10 +398,16 @@ defmodule Liteskill.Chat do
     |> elem(1)
   end
 
-  defp find_root(conversation) do
+  defp find_root(conversation), do: find_root(conversation, 0)
+
+  # coveralls-ignore-start
+  defp find_root(conversation, depth) when depth >= 100, do: conversation
+  # coveralls-ignore-stop
+
+  defp find_root(conversation, depth) do
     case conversation.parent_conversation_id do
       nil -> conversation
-      parent_id -> find_root(Repo.get!(Conversation, parent_id))
+      parent_id -> find_root(Repo.get!(Conversation, parent_id), depth + 1)
     end
   end
 

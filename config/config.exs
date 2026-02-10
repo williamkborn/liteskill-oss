@@ -11,6 +11,8 @@ config :liteskill,
   ecto_repos: [Liteskill.Repo],
   generators: [timestamp_type: :utc_datetime]
 
+config :liteskill, Liteskill.Repo, types: Liteskill.Repo.PostgrexTypes
+
 # Configure the endpoint
 config :liteskill, LiteskillWeb.Endpoint,
   url: [host: "localhost"],
@@ -70,6 +72,10 @@ config :logger, :default_formatter,
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
+
+config :liteskill, Oban,
+  repo: Liteskill.Repo,
+  queues: [default: 10, rag_ingest: 5]
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.

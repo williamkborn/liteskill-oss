@@ -43,19 +43,30 @@ defmodule LiteskillWeb.ChatLive do
        available_tools: [],
        selected_server_ids: MapSet.new(),
        show_tool_picker: false,
-       auto_confirm_tools: false,
+       auto_confirm_tools: true,
        pending_tool_calls: [],
        tools_loading: false,
        stream_task_pid: nil,
        inspecting_server: nil,
        inspecting_tools: [],
-       inspecting_tools_loading: false
+       inspecting_tools_loading: false,
+       sidebar_open: true,
+       reports: [],
+       report: nil,
+       report_markdown: "",
+       section_tree: [],
+       report_comments: [],
+       editing_section_id: nil,
+       report_mode: :view
      ), layout: {LiteskillWeb.Layouts, :chat}}
   end
 
   @impl true
   def handle_params(params, _uri, socket) do
-    {:noreply, apply_action(socket, socket.assigns.live_action, params)}
+    {:noreply,
+     socket
+     |> push_event("nav", %{})
+     |> apply_action(socket.assigns.live_action, params)}
   end
 
   defp apply_action(socket, :index, _params) do
@@ -90,6 +101,61 @@ defmodule LiteskillWeb.ChatLive do
       pending_tool_calls: [],
       page_title: "MCP Servers"
     )
+  end
+
+  defp apply_action(socket, :reports, _params) do
+    maybe_unsubscribe(socket)
+    user_id = socket.assigns.current_user.id
+    reports = Liteskill.Reports.list_reports(user_id)
+
+    socket
+    |> assign(
+      conversation: nil,
+      messages: [],
+      streaming: false,
+      stream_content: "",
+      pending_tool_calls: [],
+      reports: reports,
+      page_title: "Reports"
+    )
+  end
+
+  defp apply_action(socket, :report_show, %{"report_id" => report_id}) do
+    maybe_unsubscribe(socket)
+    user_id = socket.assigns.current_user.id
+
+    case Liteskill.Reports.get_report(report_id, user_id) do
+      {:ok, report} ->
+        markdown = Liteskill.Reports.render_markdown(report, include_comments: false)
+        section_tree = Liteskill.Reports.section_tree(report)
+
+        report_comments =
+          case Liteskill.Reports.get_report_comments(report_id, user_id) do
+            {:ok, comments} -> comments
+            _ -> []
+          end
+
+        socket
+        |> assign(
+          conversation: nil,
+          messages: [],
+          streaming: false,
+          stream_content: "",
+          pending_tool_calls: [],
+          report: report,
+          report_markdown: markdown,
+          section_tree: section_tree,
+          report_comments: report_comments,
+          editing_section_id: nil,
+          report_mode: :view,
+          page_title: report.title
+        )
+
+      {:error, _} ->
+        socket
+        |> put_flash(:error, "Report not found")
+        |> push_navigate(to: ~p"/reports")
+    end
   end
 
   defp apply_action(socket, :show, %{"conversation_id" => conversation_id}) do
@@ -127,19 +193,39 @@ defmodule LiteskillWeb.ChatLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="flex h-screen">
+    <div class="flex h-screen relative">
       <%!-- Sidebar --%>
-      <aside class="w-64 flex-shrink-0 bg-base-200 flex flex-col border-r border-base-300">
-        <div class="p-3">
+      <aside
+        id="sidebar"
+        phx-hook="SidebarNav"
+        class={[
+          "flex-shrink-0 bg-base-200 flex flex-col border-r border-base-300 transition-all duration-200 overflow-hidden",
+          if(@sidebar_open,
+            do: "w-64 max-sm:fixed max-sm:inset-0 max-sm:w-full max-sm:z-40",
+            else: "w-0 border-r-0"
+          )
+        ]}
+      >
+        <div class="flex items-center justify-between p-3 border-b border-base-300 min-w-64">
+          <img src={~p"/images/logo.svg"} class="size-7" />
+          <div class="flex items-center gap-1">
+            <Layouts.theme_toggle />
+            <button phx-click="toggle_sidebar" class="btn btn-circle btn-ghost btn-sm">
+              <.icon name="hero-arrow-left-end-on-rectangle-micro" class="size-5" />
+            </button>
+          </div>
+        </div>
+
+        <div class="p-3 min-w-64">
           <button
             phx-click="new_conversation"
-            class="btn btn-primary btn-sm w-full gap-2"
+            class="btn btn-neutral btn-sm w-full gap-2"
           >
             <.icon name="hero-plus-micro" class="size-4" /> New Chat
           </button>
         </div>
 
-        <nav class="flex-1 overflow-y-auto px-2 space-y-1 pb-4">
+        <nav class="flex-1 overflow-y-auto px-2 space-y-1 pb-4 min-w-64">
           <ChatComponents.conversation_item
             :for={conv <- @conversations}
             conversation={conv}
@@ -153,7 +239,7 @@ defmodule LiteskillWeb.ChatLive do
           </p>
         </nav>
 
-        <div class="p-2 border-t border-base-300">
+        <div class="p-2 border-t border-base-300 min-w-64">
           <.link
             navigate={~p"/mcp"}
             class={[
@@ -166,9 +252,21 @@ defmodule LiteskillWeb.ChatLive do
           >
             <.icon name="hero-server-stack-micro" class="size-4" /> MCP Servers
           </.link>
+          <.link
+            navigate={~p"/reports"}
+            class={[
+              "flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm transition-colors",
+              if(@live_action in [:reports, :report_show],
+                do: "bg-primary/10 text-primary font-medium",
+                else: "hover:bg-base-200 text-base-content/70"
+              )
+            ]}
+          >
+            <.icon name="hero-document-text-micro" class="size-4" /> Reports
+          </.link>
         </div>
 
-        <div class="p-3 border-t border-base-300">
+        <div class="p-3 border-t border-base-300 min-w-64">
           <div class="flex items-center gap-2">
             <div class="flex-1 truncate text-sm text-base-content/70">
               {@current_user.email}
@@ -186,7 +284,16 @@ defmodule LiteskillWeb.ChatLive do
           <%!-- MCP Servers --%>
           <header class="px-4 py-3 border-b border-base-300 flex-shrink-0">
             <div class="flex items-center justify-between">
-              <h1 class="text-lg font-semibold">MCP Servers</h1>
+              <div class="flex items-center gap-2">
+                <button
+                  :if={!@sidebar_open}
+                  phx-click="toggle_sidebar"
+                  class="btn btn-circle btn-ghost btn-sm"
+                >
+                  <.icon name="hero-bars-3-micro" class="size-5" />
+                </button>
+                <h1 class="text-lg font-semibold">MCP Servers</h1>
+              </div>
               <button phx-click="show_add_mcp" class="btn btn-primary btn-sm gap-1">
                 <.icon name="hero-plus-micro" class="size-4" /> Add Server
               </button>
@@ -297,11 +404,150 @@ defmodule LiteskillWeb.ChatLive do
               </div>
             </.form>
           </ChatComponents.modal>
-        <% else %>
+        <% end %>
+        <%= if @live_action == :reports do %>
+          <%!-- Reports --%>
+          <header class="px-4 py-3 border-b border-base-300 flex-shrink-0">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <button
+                  :if={!@sidebar_open}
+                  phx-click="toggle_sidebar"
+                  class="btn btn-circle btn-ghost btn-sm"
+                >
+                  <.icon name="hero-bars-3-micro" class="size-5" />
+                </button>
+                <h1 class="text-lg font-semibold">Reports</h1>
+              </div>
+            </div>
+          </header>
+
+          <div class="flex-1 overflow-y-auto p-4">
+            <div
+              :if={@reports != []}
+              class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+            >
+              <ChatComponents.report_card
+                :for={report <- @reports}
+                report={report}
+                owned={report.user_id == @current_user.id}
+              />
+            </div>
+            <p
+              :if={@reports == []}
+              class="text-base-content/50 text-center py-12"
+            >
+              No reports yet. Use the Reports tools in a conversation to create one.
+            </p>
+          </div>
+        <% end %>
+        <%= if @live_action == :report_show do %>
+          <%!-- Report Detail --%>
+          <header
+            id="report-detail"
+            phx-hook="DownloadMarkdown"
+            class="px-4 py-3 border-b border-base-300 flex-shrink-0"
+          >
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="flex items-center gap-2 min-w-0">
+                <button
+                  :if={!@sidebar_open}
+                  phx-click="toggle_sidebar"
+                  class="btn btn-circle btn-ghost btn-sm"
+                >
+                  <.icon name="hero-bars-3-micro" class="size-5" />
+                </button>
+                <.link navigate={~p"/reports"} class="btn btn-ghost btn-sm btn-circle">
+                  <.icon name="hero-arrow-left-micro" class="size-5" />
+                </.link>
+                <h1 class="text-lg font-semibold truncate">{@report && @report.title}</h1>
+              </div>
+              <div class="flex flex-wrap gap-1">
+                <%= if @report_mode == :view do %>
+                  <button phx-click="report_edit_mode" class="btn btn-ghost btn-sm gap-1">
+                    <.icon name="hero-pencil-square-micro" class="size-4" /> Edit
+                  </button>
+                <% else %>
+                  <button phx-click="address_comments" class="btn btn-primary btn-sm gap-1">
+                    <.icon name="hero-chat-bubble-left-right-micro" class="size-4" /> Address Comments
+                  </button>
+                  <button phx-click="report_view_mode" class="btn btn-ghost btn-sm gap-1">
+                    <.icon name="hero-eye-micro" class="size-4" /> View
+                  </button>
+                <% end %>
+                <button phx-click="export_report" class="btn btn-ghost btn-sm gap-1">
+                  <.icon name="hero-arrow-down-tray-micro" class="size-4" /> Export
+                </button>
+              </div>
+            </div>
+          </header>
+
+          <div class="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+            <%= if @report_mode == :view do %>
+              <%!-- View mode: clean markdown rendering --%>
+              <div
+                :if={@report_markdown != ""}
+                id="report-markdown"
+                phx-hook="CopyCode"
+                class="prose prose-sm max-w-none"
+              >
+                {LiteskillWeb.Markdown.render(@report_markdown)}
+              </div>
+              <p
+                :if={@report_markdown == ""}
+                class="text-base-content/50 text-center py-12"
+              >
+                This report has no content yet. Use the Reports tools in a conversation to add content.
+              </p>
+            <% else %>
+              <%!-- Edit mode: section tree with comments and inline editing --%>
+              <div :if={@report_comments != []} class="space-y-2">
+                <h3 class="text-sm font-semibold text-base-content/70">Report Comments</h3>
+                <ChatComponents.section_comment :for={c <- @report_comments} comment={c} />
+              </div>
+
+              <form phx-submit="add_report_comment" class="flex gap-2">
+                <input
+                  type="text"
+                  name="body"
+                  placeholder="Add a report comment..."
+                  class="input input-bordered input-sm flex-1"
+                />
+                <button type="submit" class="btn btn-sm btn-ghost">Comment</button>
+              </form>
+
+              <div :if={@section_tree != []} class="space-y-4">
+                <ChatComponents.section_node
+                  :for={node <- @section_tree}
+                  node={node}
+                  depth={1}
+                  editing_section_id={@editing_section_id}
+                />
+              </div>
+
+              <p
+                :if={@section_tree == [] && @report_comments == []}
+                class="text-base-content/50 text-center py-12"
+              >
+                This report has no sections yet. Use the Reports tools in a conversation to add content.
+              </p>
+            <% end %>
+          </div>
+        <% end %>
+        <%= if @live_action not in [:mcp_servers, :reports, :report_show] do %>
           <%= if @conversation do %>
             <%!-- Active conversation --%>
             <header class="px-4 py-3 border-b border-base-300 flex-shrink-0">
-              <h1 class="text-lg font-semibold truncate">{@conversation.title}</h1>
+              <div class="flex items-center gap-2">
+                <button
+                  :if={!@sidebar_open}
+                  phx-click="toggle_sidebar"
+                  class="btn btn-circle btn-ghost btn-sm"
+                >
+                  <.icon name="hero-bars-3-micro" class="size-5" />
+                </button>
+                <h1 class="text-lg font-semibold truncate">{@conversation.title}</h1>
+              </div>
             </header>
 
             <div id="messages" phx-hook="ScrollBottom" class="flex-1 overflow-y-auto px-4 py-4">
@@ -340,7 +586,7 @@ defmodule LiteskillWeb.ChatLive do
                 available_tools={@available_tools}
                 selected_server_ids={@selected_server_ids}
               />
-              <.form for={@form} phx-submit="send_message" class="flex gap-2 items-end">
+              <.form for={@form} phx-submit="send_message" class="flex gap-2 items-center">
                 <ChatComponents.server_picker
                   available_tools={@available_tools}
                   selected_server_ids={@selected_server_ids}
@@ -378,6 +624,11 @@ defmodule LiteskillWeb.ChatLive do
             </div>
           <% else %>
             <%!-- New conversation prompt --%>
+            <div :if={!@sidebar_open} class="px-4 pt-3">
+              <button phx-click="toggle_sidebar" class="btn btn-circle btn-ghost btn-sm">
+                <.icon name="hero-bars-3-micro" class="size-5" />
+              </button>
+            </div>
             <div class="flex-1 flex items-center justify-center px-4">
               <div class="w-full max-w-xl text-center">
                 <h1 class="text-3xl font-bold mb-8 text-base-content">
@@ -387,7 +638,7 @@ defmodule LiteskillWeb.ChatLive do
                   available_tools={@available_tools}
                   selected_server_ids={@selected_server_ids}
                 />
-                <.form for={@form} phx-submit="send_message" class="flex gap-2 items-end">
+                <.form for={@form} phx-submit="send_message" class="flex gap-2 items-center">
                   <ChatComponents.server_picker
                     available_tools={@available_tools}
                     selected_server_ids={@selected_server_ids}
@@ -439,6 +690,16 @@ defmodule LiteskillWeb.ChatLive do
   end
 
   # --- Events ---
+
+  @impl true
+  def handle_event("toggle_sidebar", _params, socket) do
+    {:noreply, assign(socket, sidebar_open: !socket.assigns.sidebar_open)}
+  end
+
+  @impl true
+  def handle_event("close_sidebar", _params, socket) do
+    {:noreply, assign(socket, sidebar_open: false)}
+  end
 
   @impl true
   def handle_event("new_conversation", _params, socket) do
@@ -716,6 +977,185 @@ defmodule LiteskillWeb.ChatLive do
   end
 
   @impl true
+  def handle_event("delete_report", %{"id" => id}, socket) do
+    user_id = socket.assigns.current_user.id
+
+    case Liteskill.Reports.delete_report(id, user_id) do
+      {:ok, _} ->
+        reports = Liteskill.Reports.list_reports(user_id)
+        {:noreply, assign(socket, reports: reports)}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Failed to delete report")}
+    end
+  end
+
+  @impl true
+  def handle_event("leave_report", %{"id" => id}, socket) do
+    user_id = socket.assigns.current_user.id
+
+    case Liteskill.Reports.leave_report(id, user_id) do
+      {:ok, _} ->
+        reports = Liteskill.Reports.list_reports(user_id)
+        {:noreply, assign(socket, reports: reports)}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Failed to leave report")}
+    end
+  end
+
+  @impl true
+  def handle_event("export_report", _params, socket) do
+    report = socket.assigns.report
+    markdown = socket.assigns.report_markdown
+
+    filename =
+      report.title
+      |> String.downcase()
+      |> String.replace(~r/[^a-z0-9]+/, "-")
+      |> String.trim("-")
+      |> Kernel.<>(".md")
+
+    {:noreply, push_event(socket, "download_markdown", %{filename: filename, content: markdown})}
+  end
+
+  @impl true
+  def handle_event("add_section_comment", %{"section_id" => section_id, "body" => body}, socket) do
+    body = String.trim(body)
+
+    if body == "" do
+      {:noreply, socket}
+    else
+      user_id = socket.assigns.current_user.id
+      Liteskill.Reports.add_comment(section_id, user_id, body, "user")
+      {:noreply, reload_report(socket)}
+    end
+  end
+
+  @impl true
+  def handle_event("add_report_comment", %{"body" => body}, socket) do
+    body = String.trim(body)
+
+    if body == "" do
+      {:noreply, socket}
+    else
+      user_id = socket.assigns.current_user.id
+      report_id = socket.assigns.report.id
+      Liteskill.Reports.add_report_comment(report_id, user_id, body, "user")
+      {:noreply, reload_report(socket)}
+    end
+  end
+
+  @impl true
+  def handle_event("reply_to_comment", %{"comment_id" => comment_id, "body" => body}, socket) do
+    body = String.trim(body)
+
+    if body == "" do
+      {:noreply, socket}
+    else
+      user_id = socket.assigns.current_user.id
+      Liteskill.Reports.reply_to_comment(comment_id, user_id, body, "user")
+      {:noreply, reload_report(socket)}
+    end
+  end
+
+  @impl true
+  def handle_event("report_edit_mode", _params, socket) do
+    {:noreply,
+     socket |> assign(report_mode: :edit, editing_section_id: nil) |> reload_report()}
+  end
+
+  @impl true
+  def handle_event("report_view_mode", _params, socket) do
+    {:noreply, socket |> assign(report_mode: :view, editing_section_id: nil) |> reload_report()}
+  end
+
+  @impl true
+  def handle_event("edit_section", %{"section-id" => section_id}, socket) do
+    {:noreply, assign(socket, editing_section_id: section_id)}
+  end
+
+  @impl true
+  def handle_event("cancel_edit_section", _params, socket) do
+    {:noreply, assign(socket, editing_section_id: nil)}
+  end
+
+  @impl true
+  def handle_event("save_section", params, socket) do
+    section_id = params["section-id"]
+    user_id = socket.assigns.current_user.id
+
+    attrs =
+      %{}
+      |> then(fn a ->
+        if params["content"], do: Map.put(a, :content, params["content"]), else: a
+      end)
+      |> then(fn a ->
+        title = params["title"]
+
+        if is_binary(title) && String.trim(title) != "",
+          do: Map.put(a, :title, String.trim(title)),
+          else: a
+      end)
+
+    case Liteskill.Reports.update_section_content(section_id, user_id, attrs) do
+      {:ok, _section} ->
+        {:noreply, socket |> assign(editing_section_id: nil) |> reload_report()}
+
+      {:error, _reason} ->
+        {:noreply, put_flash(socket, :error, "Failed to update section")}
+    end
+  end
+
+  @impl true
+  def handle_event("address_comments", _params, socket) do
+    user_id = socket.assigns.current_user.id
+    report = socket.assigns.report
+
+    system_prompt =
+      "You are a report editing assistant. You have access to the Reports tools. " <>
+        "When asked to address comments, use reports__get to read the report and see all comments. " <>
+        "For each [OPEN] comment, make meaningful section updates using reports__modify_sections, " <>
+        "then mark the comment as addressed using reports__comment with the \"resolve\" action. " <>
+        "If you are unsure how to address a comment, add an agent comment with your question " <>
+        "rather than making incorrect changes."
+
+    case Chat.create_conversation(%{
+           user_id: user_id,
+           title: "Address comments: #{report.title}",
+           system_prompt: system_prompt
+         }) do
+      {:ok, conversation} ->
+        content =
+          "Please address all unaddressed comments on report #{report.id}. " <>
+            "Read the report first, then update sections to address each open comment."
+
+        case Chat.send_message(conversation.id, user_id, content) do
+          {:ok, _message} ->
+            # Pre-select Reports builtin tools, then trigger the LLM stream
+            socket = ensure_tools_loaded(socket)
+            socket = select_reports_server(socket)
+            pid = trigger_llm_stream(conversation, user_id, socket)
+
+            {:noreply,
+             socket
+             |> assign(stream_task_pid: pid)
+             |> push_navigate(to: ~p"/c/#{conversation.id}")}
+
+          # coveralls-ignore-start
+          {:error, _reason} ->
+            {:noreply, put_flash(socket, :error, "Failed to send message")}
+            # coveralls-ignore-stop
+        end
+
+      # coveralls-ignore-start
+      {:error, _reason} ->
+        {:noreply, put_flash(socket, :error, "Failed to create conversation")}
+        # coveralls-ignore-stop
+    end
+  end
+
+  @impl true
   def handle_event("toggle_mcp_status", %{"id" => id}, socket) do
     user_id = socket.assigns.current_user.id
 
@@ -800,8 +1240,25 @@ defmodule LiteskillWeb.ChatLive do
     servers = McpServers.list_servers(user_id)
     active_servers = Enum.filter(servers, &(&1.status == "active"))
 
-    {tools, errors} =
-      Enum.reduce(active_servers, {[], []}, fn server, {tools_acc, errors_acc} ->
+    {builtin_servers, mcp_servers} =
+      Enum.split_with(active_servers, &Map.has_key?(&1, :builtin))
+
+    builtin_tools =
+      Enum.flat_map(builtin_servers, fn server ->
+        Enum.map(server.builtin.list_tools(), fn tool ->
+          %{
+            id: "#{server.id}:#{tool["name"]}",
+            server_id: server.id,
+            server_name: server.name,
+            name: tool["name"],
+            description: tool["description"],
+            input_schema: tool["inputSchema"]
+          }
+        end)
+      end)
+
+    {mcp_tools, errors} =
+      Enum.reduce(mcp_servers, {[], []}, fn server, {tools_acc, errors_acc} ->
         case McpClient.list_tools(server) do
           {:ok, tool_list} ->
             mapped =
@@ -825,7 +1282,7 @@ defmodule LiteskillWeb.ChatLive do
         end
       end)
 
-    socket = assign(socket, available_tools: tools, tools_loading: false)
+    socket = assign(socket, available_tools: builtin_tools ++ mcp_tools, tools_loading: false)
 
     socket =
       if errors != [] do
@@ -835,6 +1292,11 @@ defmodule LiteskillWeb.ChatLive do
       end
 
     {:noreply, socket}
+  end
+
+  def handle_info({:fetch_server_tools, %{builtin: module}}, socket) do
+    tools = module.list_tools()
+    {:noreply, assign(socket, inspecting_tools: tools, inspecting_tools_loading: false)}
   end
 
   def handle_info({:fetch_server_tools, server}, socket) do
@@ -1020,10 +1482,10 @@ defmodule LiteskillWeb.ChatLive do
           }
         end)
 
+      user_id = socket.assigns.current_user.id
+
       tool_servers =
         Map.new(selected_tools, fn tool ->
-          user_id = socket.assigns.current_user.id
-
           server =
             case McpServers.get_server(tool.server_id, user_id) do
               {:ok, s} -> s
@@ -1036,8 +1498,83 @@ defmodule LiteskillWeb.ChatLive do
       [
         tools: bedrock_tools,
         tool_servers: tool_servers,
-        auto_confirm: socket.assigns.auto_confirm_tools
+        auto_confirm: socket.assigns.auto_confirm_tools,
+        user_id: user_id
       ]
+    end
+  end
+
+  defp reload_report(socket) do
+    report = socket.assigns.report
+    user_id = socket.assigns.current_user.id
+
+    case Liteskill.Reports.get_report(report.id, user_id) do
+      {:ok, report} ->
+        section_tree = Liteskill.Reports.section_tree(report)
+
+        report_comments =
+          case Liteskill.Reports.get_report_comments(report.id, user_id) do
+            {:ok, comments} -> comments
+            _ -> []
+          end
+
+        include_comments = socket.assigns[:report_mode] != :view
+        markdown = Liteskill.Reports.render_markdown(report, include_comments: include_comments)
+
+        assign(socket,
+          report: report,
+          section_tree: section_tree,
+          report_comments: report_comments,
+          report_markdown: markdown
+        )
+
+      # coveralls-ignore-start
+      {:error, _} ->
+        socket
+        # coveralls-ignore-stop
+    end
+  end
+
+  defp ensure_tools_loaded(socket) do
+    if socket.assigns.available_tools == [] do
+      user_id = socket.assigns.current_user.id
+      servers = Liteskill.McpServers.list_servers(user_id)
+      active_servers = Enum.filter(servers, &(&1.status == "active"))
+
+      builtin_tools =
+        active_servers
+        |> Enum.filter(&Map.has_key?(&1, :builtin))
+        |> Enum.flat_map(fn server ->
+          Enum.map(server.builtin.list_tools(), fn tool ->
+            %{
+              id: "#{server.id}:#{tool["name"]}",
+              server_id: server.id,
+              server_name: server.name,
+              name: tool["name"],
+              description: tool["description"],
+              input_schema: tool["inputSchema"]
+            }
+          end)
+        end)
+
+      assign(socket, available_tools: builtin_tools)
+    else
+      socket
+    end
+  end
+
+  defp select_reports_server(socket) do
+    reports_server =
+      Enum.find(socket.assigns.available_tools, fn tool ->
+        String.starts_with?(tool.name, "reports__")
+      end)
+
+    case reports_server do
+      nil ->
+        socket
+
+      tool ->
+        assign(socket, selected_server_ids: MapSet.new([tool.server_id]))
     end
   end
 

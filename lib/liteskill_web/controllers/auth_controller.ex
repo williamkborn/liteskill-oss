@@ -21,17 +21,17 @@ defmodule LiteskillWeb.AuthController do
         |> put_session(:user_id, user.id)
         |> json(%{ok: true, user_id: user.id})
 
-      {:error, changeset} ->
+      {:error, _changeset} ->
         conn
         |> put_status(:unprocessable_entity)
-        |> json(%{error: "failed to authenticate", details: inspect(changeset.errors)})
+        |> json(%{error: "failed to authenticate"})
     end
   end
 
-  def callback(%{assigns: %{ueberauth_failure: failure}} = conn, _params) do
+  def callback(%{assigns: %{ueberauth_failure: _failure}} = conn, _params) do
     conn
     |> put_status(:unauthorized)
-    |> json(%{error: "authentication failed", details: inspect(failure)})
+    |> json(%{error: "authentication failed"})
   end
 
   def logout(conn, _params) do

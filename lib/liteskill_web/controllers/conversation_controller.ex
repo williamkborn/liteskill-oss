@@ -8,13 +8,11 @@ defmodule LiteskillWeb.ConversationController do
   def index(conn, params) do
     user = conn.assigns.current_user
 
-    opts = [
-      limit: Map.get(params, "limit", "20") |> String.to_integer(),
-      offset: Map.get(params, "offset", "0") |> String.to_integer()
-    ]
-
-    conversations = Chat.list_conversations(user.id, opts)
-    render(conn, :index, conversations: conversations)
+    with {:ok, limit} <- parse_positive_integer(params["limit"], 20, 100),
+         {:ok, offset} <- parse_positive_integer(params["offset"], 0, 10_000) do
+      conversations = Chat.list_conversations(user.id, limit: limit, offset: offset)
+      render(conn, :index, conversations: conversations)
+    end
   end
 
   def create(conn, params) do
@@ -34,10 +32,10 @@ defmodule LiteskillWeb.ConversationController do
         |> render(:create, conversation: conversation)
 
       # coveralls-ignore-start
-      {:error, reason} ->
+      {:error, _reason} ->
         conn
         |> put_status(:unprocessable_entity)
-        |> json(%{error: inspect(reason)})
+        |> json(%{error: "failed to create conversation"})
 
         # coveralls-ignore-stop
     end
@@ -67,7 +65,17 @@ defmodule LiteskillWeb.ConversationController do
 
   def fork(conn, %{"conversation_id" => conversation_id} = params) do
     user = conn.assigns.current_user
-    at_position = Map.get(params, "at_position", "1") |> String.to_integer()
+
+    at_position =
+      case Integer.parse(Map.get(params, "at_position", "1")) do
+        {n, ""} when n > 0 ->
+          n
+
+        # coveralls-ignore-start
+        _ ->
+          1
+          # coveralls-ignore-stop
+      end
 
     case Chat.fork_conversation(conversation_id, user.id, at_position) do
       {:ok, conversation} ->
@@ -122,4 +130,17 @@ defmodule LiteskillWeb.ConversationController do
         {:error, reason}
     end
   end
+
+  defp parse_positive_integer(nil, default, _max), do: {:ok, default}
+
+  defp parse_positive_integer(value, default, max) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, ""} when n >= 0 -> {:ok, min(n, max)}
+      _ -> {:ok, default}
+    end
+  end
+
+  # coveralls-ignore-start
+  defp parse_positive_integer(_value, default, _max), do: {:ok, default}
+  # coveralls-ignore-stop
 end

@@ -9,10 +9,20 @@ defmodule Liteskill.McpServers do
   import Ecto.Query
 
   def list_servers(user_id) do
-    McpServer
-    |> where([s], s.user_id == ^user_id or s.global == true)
-    |> order_by([s], asc: s.name)
-    |> Repo.all()
+    db_servers =
+      McpServer
+      |> where([s], s.user_id == ^user_id or s.global == true)
+      |> order_by([s], asc: s.name)
+      |> Repo.all()
+
+    Liteskill.BuiltinTools.virtual_servers() ++ db_servers
+  end
+
+  def get_server("builtin:" <> _ = id, _user_id) do
+    case Enum.find(Liteskill.BuiltinTools.virtual_servers(), &(&1.id == id)) do
+      nil -> {:error, :not_found}
+      server -> {:ok, server}
+    end
   end
 
   def get_server(id, user_id) do

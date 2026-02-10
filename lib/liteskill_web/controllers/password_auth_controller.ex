@@ -18,9 +18,16 @@ defmodule LiteskillWeb.PasswordAuthController do
         |> json(%{data: %{id: user.id, email: user.email, name: user.name}})
 
       {:error, changeset} ->
+        errors =
+          Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
+            Regex.replace(~r"%{(\w+)}", msg, fn _, key ->
+              opts |> Keyword.get(String.to_existing_atom(key), key) |> to_string()
+            end)
+          end)
+
         conn
         |> put_status(:unprocessable_entity)
-        |> json(%{error: "validation failed", details: inspect(changeset.errors)})
+        |> json(%{error: "validation failed", details: errors})
     end
   end
 

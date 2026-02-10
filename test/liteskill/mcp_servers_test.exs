@@ -4,6 +4,8 @@ defmodule Liteskill.McpServersTest do
   alias Liteskill.McpServers
   alias Liteskill.McpServers.McpServer
 
+  import Ecto.Query
+
   setup do
     {:ok, owner} =
       Liteskill.Accounts.find_or_create_from_oidc(%{
@@ -88,13 +90,17 @@ defmodule Liteskill.McpServersTest do
   end
 
   describe "list_servers/1" do
+    test "includes built-in servers", %{owner: owner} do
+      servers = McpServers.list_servers(owner.id)
+      assert Enum.any?(servers, &(&1.name == "Reports"))
+    end
+
     test "lists own servers", %{owner: owner} do
       {:ok, _} =
         McpServers.create_server(%{name: "S1", url: "https://s1.example.com", user_id: owner.id})
 
       servers = McpServers.list_servers(owner.id)
-      assert length(servers) == 1
-      assert hd(servers).name == "S1"
+      assert Enum.any?(servers, &(&1.name == "S1"))
     end
 
     test "includes global servers from other users", %{owner: owner, other: other} do
@@ -107,8 +113,7 @@ defmodule Liteskill.McpServersTest do
         })
 
       servers = McpServers.list_servers(owner.id)
-      assert length(servers) == 1
-      assert hd(servers).name == "Global"
+      assert Enum.any?(servers, &(&1.name == "Global"))
     end
 
     test "excludes private servers from other users", %{owner: owner, other: other} do
@@ -119,10 +124,11 @@ defmodule Liteskill.McpServersTest do
           user_id: other.id
         })
 
-      assert McpServers.list_servers(owner.id) == []
+      servers = McpServers.list_servers(owner.id)
+      refute Enum.any?(servers, &(&1.name == "Private"))
     end
 
-    test "orders by name", %{owner: owner} do
+    test "db servers ordered by name", %{owner: owner} do
       {:ok, _} =
         McpServers.create_server(%{
           name: "Bravo",
@@ -138,7 +144,8 @@ defmodule Liteskill.McpServersTest do
         })
 
       servers = McpServers.list_servers(owner.id)
-      assert Enum.map(servers, & &1.name) == ["Alpha", "Bravo"]
+      db_names = servers |> Enum.filter(&is_struct(&1, McpServer)) |> Enum.map(& &1.name)
+      assert db_names == ["Alpha", "Bravo"]
     end
   end
 
@@ -181,6 +188,16 @@ defmodule Liteskill.McpServersTest do
 
     test "returns not_found for nonexistent id", %{owner: owner} do
       assert {:error, :not_found} = McpServers.get_server(Ecto.UUID.generate(), owner.id)
+    end
+
+    test "returns built-in server by id", %{owner: owner} do
+      assert {:ok, server} = McpServers.get_server("builtin:reports", owner.id)
+      assert server.name == "Reports"
+      assert server.builtin == Liteskill.BuiltinTools.Reports
+    end
+
+    test "returns not_found for unknown built-in id", %{owner: owner} do
+      assert {:error, :not_found} = McpServers.get_server("builtin:nonexistent", owner.id)
     end
   end
 
@@ -232,7 +249,8 @@ defmodule Liteskill.McpServersTest do
         })
 
       assert {:ok, _} = McpServers.delete_server(server.id, owner.id)
-      assert McpServers.list_servers(owner.id) == []
+      servers = McpServers.list_servers(owner.id)
+      refute Enum.any?(servers, &(&1.name == "Server"))
     end
 
     test "non-owner cannot delete", %{owner: owner, other: other} do
@@ -249,6 +267,46 @@ defmodule Liteskill.McpServersTest do
 
     test "returns not_found for nonexistent id", %{owner: owner} do
       assert {:error, :not_found} = McpServers.delete_server(Ecto.UUID.generate(), owner.id)
+    end
+  end
+
+  describe "api_key encryption" do
+    test "api_key is stored encrypted in the database", %{owner: owner} do
+      {:ok, server} =
+        McpServers.create_server(%{
+          name: "Encrypted",
+          url: "https://enc.example.com",
+          user_id: owner.id,
+          api_key: "my-secret-key"
+        })
+
+      # Read the raw database value
+      raw =
+        Liteskill.Repo.one!(
+          from s in "mcp_servers",
+            where: s.id == type(^server.id, :binary_id),
+            select: s.api_key
+        )
+
+      # Raw DB value should be encrypted (base64), not plaintext
+      assert raw != "my-secret-key"
+      assert {:ok, _} = Base.decode64(raw)
+
+      # But the Ecto schema should decrypt it transparently
+      reloaded = Liteskill.Repo.get!(McpServer, server.id)
+      assert reloaded.api_key == "my-secret-key"
+    end
+
+    test "nil api_key stays nil", %{owner: owner} do
+      {:ok, server} =
+        McpServers.create_server(%{
+          name: "No Key",
+          url: "https://nokey.example.com",
+          user_id: owner.id
+        })
+
+      reloaded = Liteskill.Repo.get!(McpServer, server.id)
+      assert reloaded.api_key == nil
     end
   end
 

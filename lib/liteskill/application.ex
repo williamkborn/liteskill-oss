@@ -12,6 +12,7 @@ defmodule Liteskill.Application do
       Liteskill.Repo,
       {DNSCluster, query: Application.get_env(:liteskill, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Liteskill.PubSub},
+      {Oban, Application.fetch_env!(:liteskill, Oban)},
       # Chat projector - subscribes to event store PubSub and updates projections
       Liteskill.Chat.Projector,
       # Start to serve requests, typically the last entry

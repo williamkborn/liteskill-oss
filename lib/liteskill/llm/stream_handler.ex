@@ -20,6 +20,7 @@ defmodule Liteskill.LLM.StreamHandler do
   require Logger
 
   @max_retries 3
+  @max_tool_rounds 10
   @default_backoff_ms 1000
   @tool_approval_timeout_ms 300_000
 
@@ -38,8 +39,21 @@ defmodule Liteskill.LLM.StreamHandler do
     * `:plug` - Req.Test plug for testing
     * `:backoff_ms` - Base backoff for retries
     * `:tool_approval_timeout_ms` - Timeout for manual tool approval (default 300_000)
+    * `:max_tool_rounds` - Max consecutive tool-calling rounds (default 10)
   """
   def handle_stream(stream_id, messages, opts \\ []) do
+    tool_round = Keyword.get(opts, :tool_round, 0)
+    max_rounds = Keyword.get(opts, :max_tool_rounds, @max_tool_rounds)
+
+    if tool_round >= max_rounds do
+      Logger.warning("StreamHandler: max tool rounds (#{max_rounds}) exceeded for #{stream_id}")
+      {:error, :max_tool_rounds_exceeded}
+    else
+      do_handle_stream(stream_id, messages, opts)
+    end
+  end
+
+  defp do_handle_stream(stream_id, messages, opts) do
     model_id = Keyword.get(opts, :model_id, default_model_id())
     message_id = Ecto.UUID.generate()
 
@@ -341,8 +355,9 @@ defmodule Liteskill.LLM.StreamHandler do
             %{"role" => "user", "content" => tool_result_content}
           ]
 
-      # Start a new stream round
-      handle_stream(stream_id, next_messages, opts)
+      # Start a new stream round (increment tool_round)
+      next_opts = Keyword.put(opts, :tool_round, Keyword.get(opts, :tool_round, 0) + 1)
+      handle_stream(stream_id, next_messages, next_opts)
     else
       # Manual confirm — wait for approval via PubSub
       tool_servers = Keyword.get(opts, :tool_servers, %{})
@@ -398,8 +413,9 @@ defmodule Liteskill.LLM.StreamHandler do
             %{"role" => "user", "content" => tool_result_content}
           ]
 
-      # Start a new stream round
-      handle_stream(stream_id, next_messages, opts)
+      # Start a new stream round (increment tool_round)
+      next_opts = Keyword.put(opts, :tool_round, Keyword.get(opts, :tool_round, 0) + 1)
+      handle_stream(stream_id, next_messages, next_opts)
     end
   end
 
@@ -408,10 +424,16 @@ defmodule Liteskill.LLM.StreamHandler do
     req_opts = Keyword.take(opts, [:plug])
 
     result =
-      if server do
-        McpClient.call_tool(server, tc.name, tc.input, req_opts)
-      else
-        {:error, "No server configured for tool #{tc.name}"}
+      case server do
+        %{builtin: module} ->
+          context = Keyword.take(opts, [:user_id])
+          module.call_tool(tc.name, tc.input, context)
+
+        server when not is_nil(server) ->
+          McpClient.call_tool(server, tc.name, tc.input, req_opts)
+
+        nil ->
+          {:error, "No server configured for tool #{tc.name}"}
       end
 
     duration_ms = System.monotonic_time(:millisecond) - start_time
