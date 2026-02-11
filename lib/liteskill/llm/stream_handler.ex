@@ -56,9 +56,12 @@ defmodule Liteskill.LLM.StreamHandler do
   defp do_handle_stream(stream_id, messages, opts) do
     model_id = Keyword.get(opts, :model_id, default_model_id())
     message_id = Ecto.UUID.generate()
+    rag_sources = Keyword.get(opts, :rag_sources)
 
     # Start the stream
-    command = {:start_assistant_stream, %{message_id: message_id, model_id: model_id}}
+    command =
+      {:start_assistant_stream,
+       %{message_id: message_id, model_id: model_id, rag_sources: rag_sources}}
 
     case Loader.execute(ConversationAggregate, stream_id, command) do
       {:ok, _state, events} ->
@@ -75,7 +78,7 @@ defmodule Liteskill.LLM.StreamHandler do
   end
 
   defp do_stream_with_retry(stream_id, message_id, _model_id, _messages, _opts, retry_count)
-       when retry_count > @max_retries do
+       when retry_count >= @max_retries do
     fail_stream(
       stream_id,
       message_id,

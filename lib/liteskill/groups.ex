@@ -93,6 +93,52 @@ defmodule Liteskill.Groups do
     end
   end
 
+  # Admin functions — bypass creator/membership checks
+
+  def list_all_groups do
+    Group
+    |> order_by(:name)
+    |> preload([:memberships, :creator])
+    |> Repo.all()
+  end
+
+  def admin_get_group(id) do
+    case Repo.get(Group, id) do
+      nil -> {:error, :not_found}
+      group -> {:ok, group}
+    end
+  end
+
+  def admin_list_members(group_id) do
+    GroupMembership
+    |> where([gm], gm.group_id == ^group_id)
+    |> preload(:user)
+    |> Repo.all()
+  end
+
+  def admin_add_member(group_id, user_id, role \\ "member") do
+    %GroupMembership{}
+    |> GroupMembership.changeset(%{group_id: group_id, user_id: user_id, role: role})
+    |> Repo.insert()
+  end
+
+  def admin_remove_member(group_id, user_id) do
+    case Repo.one(
+           from gm in GroupMembership,
+             where: gm.group_id == ^group_id and gm.user_id == ^user_id
+         ) do
+      nil -> {:error, :not_found}
+      membership -> Repo.delete(membership)
+    end
+  end
+
+  def admin_delete_group(group_id) do
+    case Repo.get(Group, group_id) do
+      nil -> {:error, :not_found}
+      group -> Repo.delete(group)
+    end
+  end
+
   defp authorize_creator(group_id, user_id) do
     case Repo.get(Group, group_id) do
       nil ->

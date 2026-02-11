@@ -39,6 +39,16 @@ defmodule LiteskillWeb.Router do
     end
   end
 
+  # First-time admin setup
+  scope "/", LiteskillWeb do
+    pipe_through [:browser]
+
+    live_session :setup,
+      on_mount: [{LiteskillWeb.Plugs.LiveAuth, :require_setup_needed}] do
+      live "/setup", SetupLive
+    end
+  end
+
   # Authenticated LiveView routes
   scope "/", LiteskillWeb do
     pipe_through [:browser]
@@ -47,6 +57,15 @@ defmodule LiteskillWeb.Router do
       on_mount: [{LiteskillWeb.Plugs.LiveAuth, :require_authenticated}] do
       live "/", ChatLive, :index
       live "/c/:conversation_id", ChatLive, :show
+      live "/profile", ChatLive, :info
+      live "/profile/password", ChatLive, :password
+      live "/profile/admin/servers", ChatLive, :admin_servers
+      live "/profile/admin/users", ChatLive, :admin_users
+      live "/profile/admin/groups", ChatLive, :admin_groups
+      live "/wiki", ChatLive, :wiki
+      live "/wiki/:document_id", ChatLive, :wiki_page_show
+      live "/sources", ChatLive, :sources
+      live "/sources/:source_id", ChatLive, :source_show
       live "/mcp", ChatLive, :mcp_servers
       live "/reports", ChatLive, :reports
       live "/reports/:report_id", ChatLive, :report_show

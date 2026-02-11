@@ -237,8 +237,101 @@ defmodule Liteskill.Rag do
     search_opts = if dimensions, do: [{:dimensions, dimensions} | search_opts], else: search_opts
 
     with {:ok, search_results} <- search(collection_id, query, user_id, search_opts) do
-      rerank(query, search_results, [{:top_n, top_n}] ++ plug_opts)
+      case rerank(query, search_results, [{:top_n, top_n}] ++ plug_opts) do
+        {:ok, _ranked} = ok ->
+          ok
+
+        {:error, _reason} ->
+          fallback = Enum.take(search_results, top_n)
+          {:ok, Enum.map(fallback, fn r -> Map.put(r, :relevance_score, nil) end)}
+      end
     end
+  end
+
+  # --- Context Augmentation ---
+
+  def augment_context(query, user_id, opts \\ []) do
+    {plug_opts, _rest} = Keyword.split(opts, [:plug])
+
+    case CohereClient.embed(
+           [query],
+           [{:input_type, "search_query"}, {:dimensions, 1024}] ++ plug_opts
+         ) do
+      {:ok, [query_embedding]} ->
+        results = vector_search_all(user_id, query_embedding, 100)
+
+        if results == [] do
+          {:ok, []}
+        else
+          chunks = Enum.map(results, & &1.chunk)
+          preloaded = Repo.preload(chunks, document: :source)
+
+          enriched =
+            Enum.zip_with(results, preloaded, fn r, c -> %{r | chunk: c} end)
+
+          if length(enriched) >= 40 do
+            case rerank(query, enriched, [{:top_n, 40}] ++ plug_opts) do
+              {:ok, _ranked} = ok -> ok
+              {:error, _} -> {:ok, add_nil_scores(Enum.take(enriched, 40))}
+            end
+          else
+            {:ok, add_nil_scores(enriched)}
+          end
+        end
+
+      {:error, _reason} ->
+        {:ok, []}
+    end
+  end
+
+  defp add_nil_scores(results) do
+    Enum.map(results, fn r -> Map.put(r, :relevance_score, nil) end)
+  end
+
+  # --- Wiki Sync Helpers ---
+
+  def find_or_create_wiki_collection(user_id) do
+    case Repo.one(
+           from(c in Collection,
+             where: c.name == "Wiki" and c.user_id == ^user_id
+           )
+         ) do
+      %Collection{} = coll -> {:ok, coll}
+      nil -> create_collection(%{name: "Wiki"}, user_id)
+    end
+  end
+
+  def find_or_create_wiki_source(collection_id, user_id) do
+    case Repo.one(
+           from(s in Source,
+             where:
+               s.name == "wiki" and s.collection_id == ^collection_id and s.user_id == ^user_id
+           )
+         ) do
+      %Source{} = source -> {:ok, source}
+      nil -> create_source(collection_id, %{name: "wiki", source_type: "manual"}, user_id)
+    end
+  end
+
+  def find_rag_document_by_wiki_id(wiki_document_id, user_id) do
+    case Repo.one(
+           from(d in Document,
+             where:
+               fragment("? ->> 'wiki_document_id' = ?", d.metadata, ^wiki_document_id) and
+                 d.user_id == ^user_id
+           )
+         ) do
+      %Document{} = doc -> {:ok, doc}
+      nil -> {:error, :not_found}
+    end
+  end
+
+  def delete_document_chunks(document_id) do
+    {count, _} =
+      from(c in Chunk, where: c.document_id == ^document_id)
+      |> Repo.delete_all()
+
+    {:ok, count}
   end
 
   # --- Ingest ---
@@ -274,6 +367,25 @@ defmodule Liteskill.Rag do
   defp maybe_put_arg(map, key, value), do: Map.put(map, key, value)
 
   # --- Private ---
+
+  defp vector_search_all(user_id, query_embedding, limit) do
+    query_vector = Pgvector.new(query_embedding)
+
+    from(c in Chunk,
+      join: d in Document,
+      on: d.id == c.document_id,
+      join: s in Source,
+      on: s.id == d.source_id,
+      join: coll in Collection,
+      on: coll.id == s.collection_id,
+      where: coll.user_id == ^user_id,
+      where: not is_nil(c.embedding),
+      order_by: fragment("embedding <=> ?", ^query_vector),
+      limit: ^limit,
+      select: %{chunk: c, distance: fragment("embedding <=> ?", ^query_vector)}
+    )
+    |> Repo.all()
+  end
 
   defp vector_search(collection_id, query_embedding, limit) do
     query_vector = Pgvector.new(query_embedding)

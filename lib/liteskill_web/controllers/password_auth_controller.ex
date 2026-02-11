@@ -32,6 +32,8 @@ defmodule LiteskillWeb.PasswordAuthController do
   end
 
   def login(conn, %{"email" => email, "password" => password}) do
+    email = if email == "admin", do: Accounts.User.admin_email(), else: email
+
     case Accounts.authenticate_by_email_password(email, password) do
       {:ok, user} ->
         conn

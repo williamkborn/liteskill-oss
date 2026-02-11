@@ -126,7 +126,8 @@ defmodule Liteskill.Chat.Projector do
         status: "streaming",
         model_id: data["model_id"],
         position: message_count,
-        stream_version: version
+        stream_version: version,
+        rag_sources: data["rag_sources"]
       })
       |> Repo.insert!(on_conflict: :nothing)
 
@@ -153,6 +154,8 @@ defmodule Liteskill.Chat.Projector do
     |> Repo.insert!()
   end
 
+  @uuid_re ~r/\[uuid:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\]/
+
   defp project_event(%Event{
          event_type: "AssistantStreamCompleted",
          data: data,
@@ -166,6 +169,8 @@ defmodule Liteskill.Chat.Projector do
     total_tokens =
       if input_tokens && output_tokens, do: input_tokens + output_tokens, else: nil
 
+    filtered_sources = filter_cited_sources(message.rag_sources, data["full_content"])
+
     message
     |> Message.changeset(%{
       content: data["full_content"],
@@ -174,7 +179,8 @@ defmodule Liteskill.Chat.Projector do
       input_tokens: input_tokens,
       output_tokens: output_tokens,
       total_tokens: total_tokens,
-      latency_ms: data["latency_ms"]
+      latency_ms: data["latency_ms"],
+      rag_sources: filtered_sources
     })
     |> Repo.update!()
 
@@ -301,6 +307,23 @@ defmodule Liteskill.Chat.Projector do
 
       conversation ->
         fun.(conversation)
+    end
+  end
+
+  defp filter_cited_sources(nil, _content), do: nil
+  defp filter_cited_sources([], _content), do: []
+  defp filter_cited_sources(_sources, nil), do: nil
+
+  defp filter_cited_sources(sources, content) do
+    cited_ids =
+      @uuid_re
+      |> Regex.scan(content)
+      |> Enum.map(fn [_full, uuid] -> uuid end)
+      |> MapSet.new()
+
+    case Enum.filter(sources, &MapSet.member?(cited_ids, &1["document_id"])) do
+      [] -> nil
+      filtered -> filtered
     end
   end
 end

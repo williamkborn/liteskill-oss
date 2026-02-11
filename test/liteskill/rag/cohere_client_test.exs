@@ -90,7 +90,7 @@ defmodule Liteskill.Rag.CohereClientTest do
 
     test "sends correct URL path" do
       Req.Test.stub(CohereClient, fn conn ->
-        assert conn.request_path == "/model/cohere.embed-v4/invoke"
+        assert conn.request_path == "/model/us.cohere.embed-v4:0/invoke"
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")

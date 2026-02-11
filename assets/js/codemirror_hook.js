@@ -49,4 +49,46 @@ const SectionEditor = {
   }
 }
 
-export {SectionEditor}
+const WikiEditor = {
+  mounted() {
+    const content = this.el.dataset.content || ""
+
+    const state = EditorState.create({
+      doc: content,
+      extensions: [
+        basicSetup,
+        markdown({codeLanguages: languages}),
+        EditorView.lineWrapping,
+        EditorView.theme({
+          "&": {maxHeight: "500px"},
+          ".cm-scroller": {overflow: "auto"},
+          "&.cm-focused": {outline: "none"}
+        })
+      ]
+    })
+
+    this.editor = new EditorView({
+      state,
+      parent: this.el.querySelector("[data-editor-target]")
+    })
+
+    const form = this.el.closest("form")
+    if (form) {
+      form.addEventListener("submit", () => {
+        const hidden = form.querySelector("[data-editor-content]")
+        if (hidden) {
+          hidden.value = this.editor.state.doc.toString()
+        }
+      })
+    }
+  },
+
+  destroyed() {
+    if (this.editor) {
+      this.editor.destroy()
+      this.editor = null
+    }
+  }
+}
+
+export {SectionEditor, WikiEditor}

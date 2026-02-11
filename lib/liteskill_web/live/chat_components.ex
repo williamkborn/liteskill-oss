@@ -52,13 +52,36 @@ defmodule LiteskillWeb.ChatComponents do
         {@conversation.title}
       </button>
       <button
-        phx-click="delete_conversation"
+        phx-click="confirm_delete_conversation"
         phx-value-id={@conversation.id}
-        data-confirm="Archive this conversation?"
         class="opacity-0 group-hover:opacity-100 pr-2 text-base-content/40 hover:text-error transition-opacity cursor-pointer"
       >
         <.icon name="hero-trash-micro" class="size-3.5" />
       </button>
+    </div>
+    """
+  end
+
+  attr :error, :map, required: true
+
+  def stream_error(assigns) do
+    ~H"""
+    <div class="flex justify-start mb-4">
+      <div class="bg-error/10 border border-error/20 rounded-2xl rounded-bl-sm px-4 py-3 max-w-lg">
+        <div class="flex items-start gap-2">
+          <.icon name="hero-exclamation-triangle-mini" class="size-5 text-error shrink-0 mt-0.5" />
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-medium text-error">{@error.title}</p>
+            <p class="text-xs text-base-content/60 mt-1">{@error.detail}</p>
+            <button
+              phx-click="retry_message"
+              class="btn btn-error btn-outline btn-xs mt-2"
+            >
+              <.icon name="hero-arrow-path-micro" class="size-3" /> Retry
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
     """
   end
@@ -104,6 +127,35 @@ defmodule LiteskillWeb.ChatComponents do
         </div>
         <div class="p-4">
           {render_slot(@inner_block)}
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  attr :show, :boolean, required: true
+  attr :title, :string, required: true
+  attr :message, :string, required: true
+  attr :confirm_event, :string, required: true
+  attr :cancel_event, :string, required: true
+
+  def confirm_modal(assigns) do
+    ~H"""
+    <div
+      :if={@show}
+      class="fixed inset-0 z-50 flex items-center justify-center"
+      phx-window-keydown={@cancel_event}
+      phx-key="Escape"
+    >
+      <div class="fixed inset-0 bg-black/50" phx-click={@cancel_event} />
+      <div class="relative bg-base-100 rounded-xl shadow-xl w-full max-w-sm mx-4 z-10">
+        <div class="p-5">
+          <h3 class="text-lg font-semibold mb-2">{@title}</h3>
+          <p class="text-sm text-base-content/70">{@message}</p>
+        </div>
+        <div class="flex justify-end gap-2 px-5 pb-5">
+          <button phx-click={@cancel_event} class="btn btn-ghost btn-sm">Cancel</button>
+          <button phx-click={@confirm_event} class="btn btn-error btn-sm">Archive</button>
         </div>
       </div>
     </div>
@@ -170,6 +222,261 @@ defmodule LiteskillWeb.ChatComponents do
         </div>
       </div>
     </div>
+    """
+  end
+
+  # --- Source Card ---
+
+  attr :source, :map, required: true
+
+  def source_card(assigns) do
+    assigns = assign(assigns, :builtin?, Map.get(assigns.source, :builtin, false))
+
+    ~H"""
+    <.link navigate={~p"/sources/#{source_url_id(@source)}"} class="block">
+      <div class="card bg-base-100 border border-base-300 shadow-sm hover:border-primary/50 hover:shadow-md transition-all cursor-pointer">
+        <div class="card-body p-4">
+          <div class="flex items-start justify-between gap-2">
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2">
+                <.icon name={source_icon(@source)} class="size-4 text-base-content/60" />
+                <h3 class="font-semibold text-sm truncate">{@source.name}</h3>
+              </div>
+              <p :if={@source.description} class="text-xs text-base-content/70 mt-1 line-clamp-2">
+                {@source.description}
+              </p>
+            </div>
+            <div class="flex items-center gap-1">
+              <span :if={@builtin?} class="badge badge-sm badge-primary">built-in</span>
+            </div>
+          </div>
+          <div class="flex items-center justify-between mt-2">
+            <span class="text-xs text-base-content/50">
+              {Map.get(@source, :document_count, 0)} {if Map.get(@source, :document_count, 0) == 1,
+                do: "document",
+                else: "documents"}
+            </span>
+          </div>
+        </div>
+      </div>
+    </.link>
+    """
+  end
+
+  defp source_icon(%{icon: icon}), do: icon
+  defp source_icon(_), do: "hero-folder-micro"
+
+  def source_url_id(%{id: "builtin:" <> rest}), do: "builtin-" <> rest
+  def source_url_id(%{id: id}), do: id
+
+  # --- Document List ---
+
+  attr :space, :map, required: true
+
+  def space_card(assigns) do
+    ~H"""
+    <.link navigate={~p"/wiki/#{@space.id}"} class="block">
+      <div class="card bg-base-100 border border-base-300 shadow-sm hover:border-primary/50 hover:shadow-md transition-all cursor-pointer">
+        <div class="card-body p-4">
+          <div class="flex items-center gap-2">
+            <.icon
+              name="hero-rectangle-group-micro"
+              class="size-4 text-base-content/60 flex-shrink-0"
+            />
+            <h3 class="font-semibold text-sm truncate">{@space.title}</h3>
+          </div>
+          <p
+            :if={@space.content && @space.content != ""}
+            class="text-xs text-base-content/70 mt-1 line-clamp-2"
+          >
+            {String.slice(@space.content, 0..200)}
+          </p>
+          <div class="flex items-center mt-2">
+            <span class="text-xs text-base-content/50">
+              {Calendar.strftime(@space.updated_at, "%b %d, %Y")}
+            </span>
+          </div>
+        </div>
+      </div>
+    </.link>
+    """
+  end
+
+  attr :source, :map, required: true
+  attr :result, :map, required: true
+  attr :search, :string, required: true
+
+  def document_list(assigns) do
+    ~H"""
+    <div class="space-y-4">
+      <form phx-change="source_search" phx-submit="source_search" class="form-control">
+        <div class="relative">
+          <.icon
+            name="hero-magnifying-glass-micro"
+            class="size-4 absolute left-3 top-1/2 -translate-y-1/2 text-base-content/40"
+          />
+          <input
+            type="text"
+            name="search"
+            value={@search}
+            placeholder="Search documents..."
+            phx-debounce="300"
+            class="input input-bordered input-sm w-full pl-9"
+          />
+        </div>
+      </form>
+
+      <div :if={@result.documents != []} class="space-y-2">
+        <.link
+          :for={doc <- @result.documents}
+          navigate={document_url(@source, doc)}
+          class="block card bg-base-100 border border-base-300 shadow-sm hover:border-primary/40 transition-colors cursor-pointer p-3"
+        >
+          <div class="flex items-start justify-between gap-2">
+            <div class="flex-1 min-w-0">
+              <h4 class="font-medium text-sm truncate">{doc.title}</h4>
+              <p :if={doc.content} class="text-xs text-base-content/60 mt-1 line-clamp-2">
+                {String.slice(doc.content || "", 0..200)}
+              </p>
+            </div>
+            <span class="badge badge-ghost badge-xs flex-shrink-0">{doc.content_type}</span>
+          </div>
+          <div class="flex items-center gap-3 mt-2 text-xs text-base-content/40">
+            <span>{Calendar.strftime(doc.updated_at, "%b %d, %Y")}</span>
+            <span :if={doc.slug} class="truncate">/{doc.slug}</span>
+          </div>
+        </.link>
+      </div>
+
+      <p
+        :if={@result.documents == [] && @search != ""}
+        class="text-base-content/50 text-center py-8 text-sm"
+      >
+        No documents matching "{@search}"
+      </p>
+
+      <p
+        :if={@result.documents == [] && @search == ""}
+        class="text-base-content/50 text-center py-8 text-sm"
+      >
+        No documents yet.
+      </p>
+
+      <div :if={@result.total_pages > 1} class="flex justify-center gap-1 pt-2">
+        <button
+          :if={@result.page > 1}
+          phx-click="source_page"
+          phx-value-page={@result.page - 1}
+          class="btn btn-ghost btn-xs"
+        >
+          Previous
+        </button>
+        <span class="btn btn-ghost btn-xs no-animation">
+          {@result.page} / {@result.total_pages}
+        </span>
+        <button
+          :if={@result.page < @result.total_pages}
+          phx-click="source_page"
+          phx-value-page={@result.page + 1}
+          class="btn btn-ghost btn-xs"
+        >
+          Next
+        </button>
+      </div>
+    </div>
+    """
+  end
+
+  # --- Wiki Children ---
+
+  attr :source, :map, required: true
+  attr :document, :map, required: true
+  attr :tree, :list, required: true
+
+  def wiki_children(assigns) do
+    children = find_children_in_tree(assigns.tree, assigns.document.id)
+    assigns = assign(assigns, :children, children)
+
+    ~H"""
+    <div :if={@children != []} class="border-t border-base-300 pt-4">
+      <h3 class="text-sm font-semibold text-base-content/70 mb-3">Child Pages</h3>
+      <div class="space-y-2">
+        <.link
+          :for={child <- @children}
+          navigate={~p"/wiki/#{child.document.id}"}
+          class="block card bg-base-100 border border-base-300 shadow-sm hover:border-primary/40 transition-colors cursor-pointer p-3"
+        >
+          <h4 class="font-medium text-sm">{child.document.title}</h4>
+          <p
+            :if={child.document.content && child.document.content != ""}
+            class="text-xs text-base-content/60 mt-1 line-clamp-2"
+          >
+            {String.slice(child.document.content, 0..200)}
+          </p>
+        </.link>
+      </div>
+    </div>
+    """
+  end
+
+  defp document_url(%{id: "builtin:wiki"}, doc), do: ~p"/wiki/#{doc.id}"
+  defp document_url(source, _doc), do: ~p"/sources/#{source_url_id(source)}"
+
+  # --- Wiki Tree Sidebar ---
+
+  attr :tree, :list, required: true
+  attr :active_doc_id, :string, default: nil
+
+  def wiki_tree_sidebar(assigns) do
+    ~H"""
+    <ul class="space-y-0.5">
+      <li :for={node <- @tree}>
+        <.link
+          navigate={~p"/wiki/#{node.document.id}"}
+          class={[
+            "flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors truncate",
+            if(@active_doc_id == node.document.id,
+              do: "bg-primary/10 text-primary font-medium",
+              else: "hover:bg-base-200 text-base-content/70"
+            )
+          ]}
+        >
+          <.icon name="hero-document-text-micro" class="size-3 flex-shrink-0" />
+          <span class="truncate">{node.document.title}</span>
+        </.link>
+        <div :if={node.children != []} class="ml-3">
+          <.wiki_tree_sidebar tree={node.children} active_doc_id={@active_doc_id} />
+        </div>
+      </li>
+    </ul>
+    """
+  end
+
+  defp find_children_in_tree([], _id), do: []
+
+  defp find_children_in_tree(tree, id) do
+    case Enum.find(tree, fn node -> node.document.id == id end) do
+      nil -> Enum.flat_map(tree, fn node -> find_children_in_tree(node.children, id) end)
+      node -> node.children
+    end
+  end
+
+  attr :node, :map, required: true
+  attr :depth, :integer, required: true
+  attr :selected, :string, default: nil
+
+  def wiki_parent_option(assigns) do
+    ~H"""
+    <option value={@node.document.id} selected={@selected == @node.document.id}>
+      {String.duplicate("\u00A0\u00A0", @depth)}
+      <%= if @depth > 0 do %>
+        └
+      <% end %>
+      {@node.document.title}
+    </option>
+    <%= for child <- @node.children do %>
+      <.wiki_parent_option node={child} depth={@depth + 1} selected={@selected} />
+    <% end %>
     """
   end
 
@@ -639,6 +946,272 @@ defmodule LiteskillWeb.ChatComponents do
         </div>
       </div>
     </.link>
+    """
+  end
+
+  # --- RAG Query ---
+
+  attr :show, :boolean, required: true
+  attr :collections, :list, required: true
+  attr :results, :list, required: true
+  attr :loading, :boolean, required: true
+  attr :error, :any, required: true
+
+  def rag_query_modal(assigns) do
+    ~H"""
+    <div
+      :if={@show}
+      id="rag-query-modal"
+      class="fixed inset-0 z-50 flex items-center justify-center"
+      phx-mounted={@show && Phoenix.LiveView.JS.focus_first(to: "#rag-query-content")}
+    >
+      <div class="fixed inset-0 bg-black/50" phx-click="close_rag_query" />
+      <div
+        id="rag-query-content"
+        class="relative bg-base-100 rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] flex flex-col"
+      >
+        <div class="flex items-center justify-between p-4 border-b border-base-300">
+          <h3 class="text-lg font-semibold">RAG Query</h3>
+          <button phx-click="close_rag_query" class="btn btn-ghost btn-sm btn-square">
+            <.icon name="hero-x-mark-micro" class="size-5" />
+          </button>
+        </div>
+
+        <div class="p-4 border-b border-base-300">
+          <%= if @collections == [] do %>
+            <p class="text-base-content/50 text-sm text-center py-4">
+              No RAG collections found. Ingest some documents first.
+            </p>
+          <% else %>
+            <form phx-submit="rag_search" class="space-y-3">
+              <div class="form-control">
+                <select
+                  name="collection_id"
+                  class="select select-bordered select-sm w-full"
+                >
+                  <option :for={coll <- @collections} value={coll.id}>
+                    {coll.name}
+                  </option>
+                </select>
+              </div>
+              <div class="flex gap-2">
+                <input
+                  type="text"
+                  name="query"
+                  placeholder="Enter search query..."
+                  class="input input-bordered input-sm flex-1"
+                  autocomplete="off"
+                />
+                <button type="submit" class="btn btn-primary btn-sm" disabled={@loading}>
+                  <%= if @loading do %>
+                    <span class="loading loading-spinner loading-xs" /> Searching...
+                  <% else %>
+                    <.icon name="hero-magnifying-glass-micro" class="size-4" /> Search
+                  <% end %>
+                </button>
+              </div>
+            </form>
+          <% end %>
+        </div>
+
+        <div class="flex-1 overflow-y-auto p-4 space-y-3">
+          <div :if={@error} class="alert alert-error text-sm">
+            {@error}
+          </div>
+
+          <div :if={@loading} class="text-center py-8 text-base-content/50">
+            <span class="loading loading-spinner loading-md" />
+            <p class="mt-2 text-sm">Embedding query and searching...</p>
+          </div>
+
+          <div
+            :if={!@loading && @results == [] && !@error}
+            class="text-center py-8 text-base-content/50 text-sm"
+          >
+            Enter a query to search your RAG collections.
+          </div>
+
+          <div :if={!@loading && @results != []} class="space-y-2">
+            <p class="text-xs text-base-content/50 font-medium">
+              {length(@results)} results
+            </p>
+
+            <.rag_result_card
+              :for={{result, idx} <- Enum.with_index(@results)}
+              result={result}
+              rank={idx + 1}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  attr :result, :map, required: true
+  attr :rank, :integer, required: true
+
+  def rag_result_card(assigns) do
+    ~H"""
+    <div class="border border-base-300 rounded-lg overflow-hidden">
+      <div class="flex items-center justify-between px-3 py-2 bg-base-200/50 text-xs">
+        <div class="flex items-center gap-2">
+          <span class="badge badge-sm badge-primary font-mono">#{@rank}</span>
+          <span class="font-medium text-base-content/70">
+            {if @result.chunk.document, do: @result.chunk.document.title, else: "Unknown"}
+          </span>
+          <span :if={source_name(@result)} class="text-base-content/50">
+            via {source_name(@result)}
+          </span>
+        </div>
+        <span :if={@result.relevance_score} class="font-mono text-base-content/60">
+          {Float.round(@result.relevance_score * 100, 1)}%
+        </span>
+      </div>
+      <div class="px-3 py-2">
+        <pre class="text-xs text-base-content/80 whitespace-pre-wrap font-mono leading-relaxed max-h-48 overflow-y-auto">{@result.chunk.content}</pre>
+      </div>
+      <div class="px-3 py-1.5 bg-base-200/30 text-[10px] text-base-content/40 flex gap-3">
+        <span>Position: {@result.chunk.position}</span>
+        <span :if={@result.chunk.token_count}>Tokens: {@result.chunk.token_count}</span>
+      </div>
+    </div>
+    """
+  end
+
+  defp source_name(%{chunk: %{document: %{source: %{name: name}}}}), do: name
+  defp source_name(_), do: nil
+
+  # --- Sources UI ---
+
+  attr :message, :map, required: true
+
+  def sources_button(assigns) do
+    has_sources =
+      assigns.message.role == "assistant" &&
+        assigns.message.content not in [nil, ""] &&
+        assigns.message.rag_sources not in [nil, []]
+
+    assigns = assign(assigns, :has_sources, has_sources)
+    count = if has_sources, do: length(assigns.message.rag_sources), else: 0
+    assigns = assign(assigns, :count, count)
+
+    ~H"""
+    <div
+      :if={@has_sources}
+      class="flex justify-start mb-4"
+    >
+      <button
+        phx-click="toggle_sources_sidebar"
+        phx-value-message-id={@message.id}
+        class="btn btn-ghost btn-xs gap-1 text-base-content/50 hover:text-primary"
+      >
+        <.icon name="hero-document-text-micro" class="size-3.5" /> Sources ({@count})
+      </button>
+    </div>
+    """
+  end
+
+  attr :show, :boolean, required: true
+  attr :sources, :list, required: true
+
+  def sources_sidebar(assigns) do
+    deduped =
+      assigns.sources
+      |> Enum.uniq_by(fn s -> s["document_id"] end)
+
+    assigns = assign(assigns, :deduped, deduped)
+
+    ~H"""
+    <aside
+      :if={@show}
+      class="w-80 flex-shrink-0 border-l border-base-300 bg-base-100 flex flex-col overflow-hidden"
+    >
+      <div class="flex items-center justify-between p-3 border-b border-base-300">
+        <h3 class="font-semibold text-sm">Sources</h3>
+        <button phx-click="close_sources_sidebar" class="btn btn-ghost btn-sm btn-square">
+          <.icon name="hero-x-mark-micro" class="size-5" />
+        </button>
+      </div>
+      <div class="flex-1 overflow-y-auto p-3 space-y-2">
+        <.source_item
+          :for={{source, idx} <- Enum.with_index(@deduped)}
+          source={source}
+          rank={idx + 1}
+        />
+      </div>
+    </aside>
+    """
+  end
+
+  attr :source, :map, required: true
+  attr :rank, :integer, required: true
+
+  def source_item(assigns) do
+    ~H"""
+    <button
+      phx-click="show_source_modal"
+      phx-value-chunk-id={@source["chunk_id"]}
+      data-doc-id={@source["document_id"]}
+      class="source-item w-full text-left border border-base-300 rounded-lg p-2 hover:border-primary/40 transition-colors cursor-pointer"
+    >
+      <div class="flex items-center gap-2">
+        <span class="badge badge-sm badge-primary font-mono">#{@rank}</span>
+        <span class="text-xs font-medium truncate">{@source["document_title"]}</span>
+      </div>
+      <p class="text-xs text-base-content/60 mt-1 line-clamp-2">
+        {String.slice(@source["content"] || "", 0..120)}
+      </p>
+      <div class="flex items-center gap-2 mt-1 text-[10px] text-base-content/40">
+        <span :if={@source["source_name"]}>via {@source["source_name"]}</span>
+        <span :if={@source["relevance_score"]}>
+          {Float.round(@source["relevance_score"] * 100, 1)}%
+        </span>
+      </div>
+    </button>
+    """
+  end
+
+  attr :show, :boolean, required: true
+  attr :source, :map, required: true
+
+  def source_detail_modal(assigns) do
+    ~H"""
+    <div
+      :if={@show}
+      class="fixed inset-0 z-50 flex items-center justify-center"
+      phx-window-keydown="close_source_modal"
+      phx-key="Escape"
+    >
+      <div class="fixed inset-0 bg-black/50" phx-click="close_source_modal" />
+      <div class="relative bg-base-100 rounded-xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col z-10 mx-4">
+        <div class="flex items-center justify-between p-4 border-b border-base-300">
+          <h3 class="font-semibold text-sm truncate pr-4">
+            {@source["document_title"] || "Source"}
+          </h3>
+          <button phx-click="close_source_modal" class="btn btn-ghost btn-sm btn-square">
+            <.icon name="hero-x-mark-micro" class="size-5" />
+          </button>
+        </div>
+        <div class="flex-1 overflow-y-auto p-4 space-y-3">
+          <div class="bg-base-200/50 rounded-lg p-3">
+            <pre class="text-xs whitespace-pre-wrap font-mono leading-relaxed">{@source["content"]}</pre>
+          </div>
+          <div class="flex items-center gap-3 text-xs text-base-content/50">
+            <span :if={@source["source_name"]}>Source: {@source["source_name"]}</span>
+            <span :if={@source["position"]}>Position: {@source["position"]}</span>
+            <span :if={@source["relevance_score"]}>
+              Relevance: {Float.round(@source["relevance_score"] * 100, 1)}%
+            </span>
+          </div>
+        </div>
+        <div :if={@source["source_uri"]} class="p-4 border-t border-base-300">
+          <.link navigate={@source["source_uri"]} class="btn btn-primary btn-sm w-full gap-1">
+            <.icon name="hero-arrow-top-right-on-square-micro" class="size-4" /> Go to source document
+          </.link>
+        </div>
+      </div>
+    </div>
     """
   end
 end

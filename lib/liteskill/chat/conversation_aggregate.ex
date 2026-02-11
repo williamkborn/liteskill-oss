@@ -84,7 +84,8 @@ defmodule Liteskill.Chat.ConversationAggregate do
         message_id: params[:message_id] || Ecto.UUID.generate(),
         model_id: params.model_id,
         request_id: params[:request_id] || Ecto.UUID.generate(),
-        timestamp: now
+        timestamp: now,
+        rag_sources: params[:rag_sources]
       })
 
     {:ok, [event]}

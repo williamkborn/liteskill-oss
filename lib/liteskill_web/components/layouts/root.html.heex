@@ -25,8 +25,13 @@
           setTheme(localStorage.getItem("phx:theme") || "dark");
         }
         window.addEventListener("storage", (e) => e.key === "phx:theme" && setTheme(e.newValue || "system"));
-        
+
         window.addEventListener("phx:set-theme", (e) => setTheme(e.target.dataset.phxTheme));
+
+        const accent = localStorage.getItem("phx:accent");
+        if (accent && accent !== "orange") {
+          document.documentElement.setAttribute("data-accent", accent);
+        }
       })();
     </script>
   </head>

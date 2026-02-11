@@ -8,6 +8,7 @@ defmodule LiteskillWeb.ChatLive do
   alias Liteskill.McpServers.Client, as: McpClient
   alias Liteskill.Repo
   alias LiteskillWeb.ChatComponents
+  alias LiteskillWeb.ProfileLive
 
   import Ecto.Query
 
@@ -51,14 +52,44 @@ defmodule LiteskillWeb.ChatLive do
        inspecting_tools: [],
        inspecting_tools_loading: false,
        sidebar_open: true,
+       confirm_delete_id: nil,
+       data_sources: [],
+       current_source: nil,
+       source_documents: %{documents: [], page: 1, page_size: 20, total: 0, total_pages: 1},
+       source_search: "",
+       wiki_document: nil,
+       wiki_tree: [],
+       wiki_sidebar_tree: [],
+       wiki_form: to_form(%{"title" => "", "content" => ""}, as: :wiki_page),
+       show_wiki_form: false,
+       wiki_editing: nil,
+       wiki_parent_id: nil,
+       wiki_space: nil,
        reports: [],
        report: nil,
        report_markdown: "",
        section_tree: [],
        report_comments: [],
        editing_section_id: nil,
-       report_mode: :view
-     ), layout: {LiteskillWeb.Layouts, :chat}}
+       report_mode: :view,
+       # RAG query
+       show_rag_query: false,
+       rag_query_loading: false,
+       rag_query_results: [],
+       rag_query_collections: [],
+       rag_query_error: nil,
+       show_sources_sidebar: false,
+       sidebar_sources: [],
+       show_source_modal: false,
+       source_modal_data: %{},
+       stream_error: nil,
+       # Wiki export modal
+       show_wiki_export_modal: false,
+       wiki_export_title: "",
+       wiki_export_parent_id: nil,
+       wiki_export_tree: []
+     )
+     |> assign(ProfileLive.profile_assigns()), layout: {LiteskillWeb.Layouts, :chat}}
   end
 
   @impl true
@@ -66,7 +97,29 @@ defmodule LiteskillWeb.ChatLive do
     {:noreply,
      socket
      |> push_event("nav", %{})
+     |> push_accent_color()
      |> apply_action(socket.assigns.live_action, params)}
+  end
+
+  defp push_accent_color(socket) do
+    color = Liteskill.Accounts.User.accent_color(socket.assigns.current_user)
+    push_event(socket, "set-accent", %{color: color})
+  end
+
+  defp apply_action(socket, action, _params)
+       when action in [:info, :password, :admin_servers, :admin_users, :admin_groups] do
+    maybe_unsubscribe(socket)
+
+    socket
+    |> assign(
+      conversation: nil,
+      messages: [],
+      streaming: false,
+      stream_content: "",
+      pending_tool_calls: [],
+      wiki_sidebar_tree: []
+    )
+    |> ProfileLive.apply_profile_action(action, socket.assigns.current_user)
   end
 
   defp apply_action(socket, :index, _params) do
@@ -80,6 +133,7 @@ defmodule LiteskillWeb.ChatLive do
       streaming: false,
       stream_content: "",
       pending_tool_calls: [],
+      wiki_sidebar_tree: [],
       page_title: "Liteskill"
     )
   end
@@ -99,8 +153,155 @@ defmodule LiteskillWeb.ChatLive do
       show_mcp_modal: false,
       editing_mcp: nil,
       pending_tool_calls: [],
+      wiki_sidebar_tree: [],
       page_title: "MCP Servers"
     )
+  end
+
+  defp apply_action(socket, :sources, _params) do
+    maybe_unsubscribe(socket)
+    user_id = socket.assigns.current_user.id
+    sources = Liteskill.DataSources.list_sources(user_id)
+
+    sources =
+      Enum.map(sources, fn source ->
+        source_ref =
+          if is_struct(source, Liteskill.DataSources.Source), do: source.id, else: source.id
+
+        Map.put(source, :document_count, Liteskill.DataSources.document_count(source_ref))
+      end)
+
+    rag_collections = Liteskill.Rag.list_collections(user_id)
+
+    socket
+    |> assign(
+      conversation: nil,
+      messages: [],
+      streaming: false,
+      stream_content: "",
+      pending_tool_calls: [],
+      data_sources: sources,
+      wiki_sidebar_tree: [],
+      rag_query_collections: rag_collections,
+      show_rag_query: false,
+      rag_query_results: [],
+      rag_query_loading: false,
+      rag_query_error: nil,
+      page_title: "Data Sources"
+    )
+  end
+
+  defp apply_action(socket, :wiki, _params) do
+    maybe_unsubscribe(socket)
+    user_id = socket.assigns.current_user.id
+
+    result =
+      Liteskill.DataSources.list_documents_paginated("builtin:wiki", user_id,
+        page: 1,
+        search: nil,
+        parent_id: nil
+      )
+
+    socket
+    |> assign(
+      conversation: nil,
+      messages: [],
+      streaming: false,
+      stream_content: "",
+      pending_tool_calls: [],
+      current_source: get_wiki_source(),
+      source_documents: result,
+      source_search: "",
+      wiki_sidebar_tree: [],
+      wiki_space: nil,
+      page_title: "Wiki"
+    )
+  end
+
+  defp apply_action(socket, :wiki_page_show, %{"document_id" => doc_id}) do
+    maybe_unsubscribe(socket)
+    user_id = socket.assigns.current_user.id
+
+    case Liteskill.DataSources.get_document(doc_id, user_id) do
+      {:ok, doc} ->
+        space =
+          if is_nil(doc.parent_document_id) do
+            doc
+          else
+            case Liteskill.DataSources.find_root_ancestor(doc.id, user_id) do
+              {:ok, root} -> root
+              _ -> nil
+            end
+          end
+
+        space_children_tree =
+          if space do
+            Liteskill.DataSources.space_tree("builtin:wiki", space.id, user_id)
+          else
+            []
+          end
+
+        socket
+        |> assign(
+          conversation: nil,
+          messages: [],
+          streaming: false,
+          stream_content: "",
+          pending_tool_calls: [],
+          current_source: get_wiki_source(),
+          wiki_document: doc,
+          wiki_tree: space_children_tree,
+          wiki_sidebar_tree: space_children_tree,
+          wiki_space: space,
+          show_wiki_form: false,
+          wiki_editing: nil,
+          wiki_parent_id: nil,
+          page_title: doc.title
+        )
+
+      {:error, _} ->
+        socket
+        |> put_flash(:error, "Page not found")
+        |> push_navigate(to: ~p"/wiki")
+    end
+  end
+
+  defp apply_action(socket, :source_show, %{"source_id" => source_url_id}) do
+    maybe_unsubscribe(socket)
+    user_id = socket.assigns.current_user.id
+    source_id = source_id_from_url(source_url_id)
+
+    case Liteskill.DataSources.get_source(source_id, user_id) do
+      {:ok, source} ->
+        source_ref = source.id
+        search = socket.assigns.source_search
+
+        result =
+          Liteskill.DataSources.list_documents_paginated(source_ref, user_id,
+            page: 1,
+            search: if(search == "", do: nil, else: search),
+            parent_id: nil
+          )
+
+        socket
+        |> assign(
+          conversation: nil,
+          messages: [],
+          streaming: false,
+          stream_content: "",
+          pending_tool_calls: [],
+          current_source: source,
+          source_documents: result,
+          source_search: "",
+          wiki_sidebar_tree: [],
+          page_title: source.name
+        )
+
+      {:error, _} ->
+        socket
+        |> put_flash(:error, "Source not found")
+        |> push_navigate(to: ~p"/sources")
+    end
   end
 
   defp apply_action(socket, :reports, _params) do
@@ -116,6 +317,7 @@ defmodule LiteskillWeb.ChatLive do
       stream_content: "",
       pending_tool_calls: [],
       reports: reports,
+      wiki_sidebar_tree: [],
       page_title: "Reports"
     )
   end
@@ -148,6 +350,7 @@ defmodule LiteskillWeb.ChatLive do
           report_comments: report_comments,
           editing_section_id: nil,
           report_mode: :view,
+          wiki_sidebar_tree: [],
           page_title: report.title
         )
 
@@ -180,6 +383,7 @@ defmodule LiteskillWeb.ChatLive do
           streaming: streaming,
           stream_content: "",
           pending_tool_calls: pending,
+          wiki_sidebar_tree: [],
           page_title: conversation.title
         )
 
@@ -239,7 +443,48 @@ defmodule LiteskillWeb.ChatLive do
           </p>
         </nav>
 
+        <%= if @wiki_sidebar_tree != [] && @live_action == :wiki_page_show && @wiki_space do %>
+          <div class="px-2 pb-2 border-t border-base-300 min-w-64 overflow-y-auto max-h-64">
+            <div class="py-2 px-1">
+              <.link
+                navigate={~p"/wiki/#{@wiki_space.id}"}
+                class="text-xs font-semibold text-base-content/50 uppercase tracking-wider mb-2 hover:text-primary transition-colors block truncate"
+              >
+                {@wiki_space.title}
+              </.link>
+              <ChatComponents.wiki_tree_sidebar
+                tree={@wiki_sidebar_tree}
+                active_doc_id={if @wiki_document, do: @wiki_document.id, else: nil}
+              />
+            </div>
+          </div>
+        <% end %>
+
         <div class="p-2 border-t border-base-300 min-w-64">
+          <.link
+            navigate={~p"/wiki"}
+            class={[
+              "flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm transition-colors",
+              if(@live_action in [:wiki, :wiki_page_show],
+                do: "bg-primary/10 text-primary font-medium",
+                else: "hover:bg-base-200 text-base-content/70"
+              )
+            ]}
+          >
+            <.icon name="hero-book-open-micro" class="size-4" /> Wiki
+          </.link>
+          <.link
+            navigate={~p"/sources"}
+            class={[
+              "flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm transition-colors",
+              if(@live_action in [:sources, :source_show],
+                do: "bg-primary/10 text-primary font-medium",
+                else: "hover:bg-base-200 text-base-content/70"
+              )
+            ]}
+          >
+            <.icon name="hero-circle-stack-micro" class="size-4" /> Data Sources
+          </.link>
           <.link
             navigate={~p"/mcp"}
             class={[
@@ -268,9 +513,18 @@ defmodule LiteskillWeb.ChatLive do
 
         <div class="p-3 border-t border-base-300 min-w-64">
           <div class="flex items-center gap-2">
-            <div class="flex-1 truncate text-sm text-base-content/70">
+            <.link
+              navigate={~p"/profile"}
+              class={[
+                "flex-1 truncate text-sm hover:text-base-content",
+                if(ProfileLive.profile_action?(@live_action),
+                  do: "text-primary font-medium",
+                  else: "text-base-content/70"
+                )
+              ]}
+            >
               {@current_user.email}
-            </div>
+            </.link>
             <.link href={~p"/auth/logout"} method="delete" class="btn btn-ghost btn-xs">
               <.icon name="hero-arrow-right-start-on-rectangle-micro" class="size-4" />
             </.link>
@@ -280,6 +534,334 @@ defmodule LiteskillWeb.ChatLive do
 
       <%!-- Main Area --%>
       <main class="flex-1 flex flex-col min-w-0">
+        <%= if @live_action == :sources do %>
+          <%!-- Data Sources --%>
+          <header class="px-4 py-3 border-b border-base-300 flex-shrink-0">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <button
+                  :if={!@sidebar_open}
+                  phx-click="toggle_sidebar"
+                  class="btn btn-circle btn-ghost btn-sm"
+                >
+                  <.icon name="hero-bars-3-micro" class="size-5" />
+                </button>
+                <h1 class="text-lg font-semibold">Data Sources</h1>
+              </div>
+              <button phx-click="open_rag_query" class="btn btn-ghost btn-sm gap-1">
+                <.icon name="hero-magnifying-glass-micro" class="size-4" /> RAG Query
+              </button>
+            </div>
+          </header>
+
+          <div class="flex-1 overflow-y-auto p-4">
+            <div
+              :if={@data_sources != []}
+              class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+            >
+              <ChatComponents.source_card
+                :for={source <- @data_sources}
+                source={source}
+              />
+            </div>
+            <p
+              :if={@data_sources == []}
+              class="text-base-content/50 text-center py-12"
+            >
+              No data sources available.
+            </p>
+          </div>
+
+          <ChatComponents.rag_query_modal
+            show={@show_rag_query}
+            collections={@rag_query_collections}
+            results={@rag_query_results}
+            loading={@rag_query_loading}
+            error={@rag_query_error}
+          />
+        <% end %>
+        <%= if @live_action == :source_show && @current_source do %>
+          <%!-- Source Documents --%>
+          <header class="px-4 py-3 border-b border-base-300 flex-shrink-0">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <button
+                  :if={!@sidebar_open}
+                  phx-click="toggle_sidebar"
+                  class="btn btn-circle btn-ghost btn-sm"
+                >
+                  <.icon name="hero-bars-3-micro" class="size-5" />
+                </button>
+                <.link navigate={~p"/sources"} class="btn btn-ghost btn-xs">
+                  <.icon name="hero-arrow-left-micro" class="size-4" />
+                </.link>
+                <h1 class="text-lg font-semibold">{@current_source.name}</h1>
+                <span
+                  :if={Map.get(@current_source, :builtin, false)}
+                  class="badge badge-sm badge-primary"
+                >
+                  built-in
+                </span>
+              </div>
+            </div>
+          </header>
+
+          <div class="flex-1 overflow-y-auto p-4 max-w-3xl mx-auto w-full">
+            <ChatComponents.document_list
+              source={@current_source}
+              result={@source_documents}
+              search={@source_search}
+            />
+          </div>
+        <% end %>
+        <%= if @live_action == :wiki do %>
+          <%!-- Wiki Home — Spaces --%>
+          <header class="px-4 py-3 border-b border-base-300 flex-shrink-0">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <button
+                  :if={!@sidebar_open}
+                  phx-click="toggle_sidebar"
+                  class="btn btn-circle btn-ghost btn-sm"
+                >
+                  <.icon name="hero-bars-3-micro" class="size-5" />
+                </button>
+                <h1 class="text-lg font-semibold">Wiki</h1>
+              </div>
+              <button phx-click="show_wiki_form" class="btn btn-primary btn-sm gap-1">
+                <.icon name="hero-plus-micro" class="size-4" /> New Space
+              </button>
+            </div>
+          </header>
+
+          <div class="flex-1 overflow-y-auto p-4 max-w-4xl mx-auto w-full">
+            <div
+              :if={@source_documents.documents != []}
+              class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
+            >
+              <ChatComponents.space_card
+                :for={space <- @source_documents.documents}
+                space={space}
+              />
+            </div>
+            <p
+              :if={@source_documents.documents == []}
+              class="text-base-content/50 text-center py-12 text-sm"
+            >
+              No spaces yet. Create your first space to get started.
+            </p>
+
+            <div :if={@source_documents.total_pages > 1} class="flex justify-center gap-1 pt-4">
+              <button
+                :if={@source_documents.page > 1}
+                phx-click="source_page"
+                phx-value-page={@source_documents.page - 1}
+                class="btn btn-ghost btn-xs"
+              >
+                Previous
+              </button>
+              <span class="btn btn-ghost btn-xs no-animation">
+                {@source_documents.page} / {@source_documents.total_pages}
+              </span>
+              <button
+                :if={@source_documents.page < @source_documents.total_pages}
+                phx-click="source_page"
+                phx-value-page={@source_documents.page + 1}
+                class="btn btn-ghost btn-xs"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+
+          <ChatComponents.modal
+            id="wiki-form-modal"
+            title="New Space"
+            show={@show_wiki_form}
+            on_close="close_wiki_form"
+          >
+            <.form for={@wiki_form} phx-submit="create_wiki_page" class="space-y-4">
+              <div class="form-control">
+                <label class="label"><span class="label-text">Space Name *</span></label>
+                <input
+                  type="text"
+                  name="wiki_page[title]"
+                  value={Phoenix.HTML.Form.input_value(@wiki_form, :title)}
+                  class="input input-bordered w-full"
+                  required
+                />
+              </div>
+              <div class="form-control">
+                <label class="label"><span class="label-text">Description (Markdown)</span></label>
+                <textarea
+                  name="wiki_page[content]"
+                  class="textarea textarea-bordered w-full font-mono text-sm"
+                  rows="6"
+                >{Phoenix.HTML.Form.input_value(@wiki_form, :content)}</textarea>
+              </div>
+              <div class="flex justify-end gap-2 pt-2">
+                <button type="button" phx-click="close_wiki_form" class="btn btn-ghost btn-sm">
+                  Cancel
+                </button>
+                <button type="submit" class="btn btn-primary btn-sm">Create Space</button>
+              </div>
+            </.form>
+          </ChatComponents.modal>
+        <% end %>
+        <%= if @live_action == :wiki_page_show && @wiki_document do %>
+          <%!-- Wiki Page Detail --%>
+          <header class="px-4 py-3 border-b border-base-300 flex-shrink-0">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="flex items-center gap-2 min-w-0">
+                <button
+                  :if={!@sidebar_open}
+                  phx-click="toggle_sidebar"
+                  class="btn btn-circle btn-ghost btn-sm"
+                >
+                  <.icon name="hero-bars-3-micro" class="size-5" />
+                </button>
+                <.link
+                  navigate={
+                    if is_nil(@wiki_document.parent_document_id),
+                      do: ~p"/wiki",
+                      else: ~p"/wiki/#{@wiki_document.parent_document_id}"
+                  }
+                  class="btn btn-ghost btn-xs"
+                >
+                  <.icon name="hero-arrow-left-micro" class="size-4" />
+                </.link>
+                <h1 class="text-lg font-semibold truncate">{@wiki_document.title}</h1>
+              </div>
+              <div :if={!@wiki_editing} class="flex gap-1">
+                <button phx-click="edit_wiki_page" class="btn btn-ghost btn-sm gap-1">
+                  <.icon name="hero-pencil-square-micro" class="size-4" /> Edit
+                </button>
+                <button
+                  phx-click="show_wiki_form"
+                  phx-value-parent-id={@wiki_document.id}
+                  class="btn btn-ghost btn-sm gap-1"
+                >
+                  <.icon name="hero-plus-micro" class="size-4" /> Add Child
+                </button>
+                <button
+                  phx-click="delete_wiki_page"
+                  data-confirm="Delete this page and all children?"
+                  class="btn btn-ghost btn-sm text-error gap-1"
+                >
+                  <.icon name="hero-trash-micro" class="size-4" /> Delete
+                </button>
+              </div>
+            </div>
+          </header>
+
+          <%= if @wiki_editing do %>
+            <div class="flex-1 overflow-y-auto px-6 py-6 max-w-3xl mx-auto w-full">
+              <.form for={@wiki_form} phx-submit="update_wiki_page" class="space-y-4">
+                <div class="form-control">
+                  <input
+                    type="text"
+                    name="wiki_page[title]"
+                    value={Phoenix.HTML.Form.input_value(@wiki_form, :title)}
+                    class="input input-bordered w-full text-lg font-semibold"
+                    required
+                  />
+                </div>
+                <input
+                  type="hidden"
+                  name="wiki_page[content]"
+                  data-editor-content
+                  value={Phoenix.HTML.Form.input_value(@wiki_form, :content)}
+                />
+                <div
+                  id="wiki-editor"
+                  phx-hook="WikiEditor"
+                  phx-update="ignore"
+                  data-content={Phoenix.HTML.Form.input_value(@wiki_form, :content)}
+                  class="border border-base-300 rounded-lg overflow-hidden"
+                >
+                  <div data-editor-target class="min-h-[300px]"></div>
+                </div>
+                <div class="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    phx-click="cancel_wiki_edit"
+                    class="btn btn-ghost btn-sm"
+                  >
+                    Cancel
+                  </button>
+                  <button type="submit" class="btn btn-primary btn-sm">Save</button>
+                </div>
+              </.form>
+            </div>
+          <% else %>
+            <div class="flex-1 overflow-y-auto px-6 py-6 max-w-3xl mx-auto w-full space-y-6">
+              <div
+                :if={@wiki_document.content && @wiki_document.content != ""}
+                id="wiki-content"
+                phx-hook="CopyCode"
+                class="prose prose-sm max-w-none"
+              >
+                {LiteskillWeb.Markdown.render(@wiki_document.content)}
+              </div>
+              <p
+                :if={!@wiki_document.content || @wiki_document.content == ""}
+                class="text-base-content/50 text-center py-8"
+              >
+                This page has no content yet. Click "Edit" to add some.
+              </p>
+
+              <ChatComponents.wiki_children
+                source={@current_source}
+                document={@wiki_document}
+                tree={@wiki_tree}
+              />
+            </div>
+          <% end %>
+
+          <ChatComponents.modal
+            id="wiki-page-modal"
+            title="New Child Page"
+            show={@show_wiki_form}
+            on_close="close_wiki_form"
+          >
+            <.form for={@wiki_form} phx-submit="create_wiki_page" class="space-y-4">
+              <div class="form-control">
+                <label class="label"><span class="label-text">Title *</span></label>
+                <input
+                  type="text"
+                  name="wiki_page[title]"
+                  value={Phoenix.HTML.Form.input_value(@wiki_form, :title)}
+                  class="input input-bordered w-full"
+                  required
+                />
+              </div>
+              <div class="form-control">
+                <label class="label"><span class="label-text">Content (Markdown)</span></label>
+                <input
+                  type="hidden"
+                  name="wiki_page[content]"
+                  data-editor-content
+                  value={Phoenix.HTML.Form.input_value(@wiki_form, :content)}
+                />
+                <div
+                  id="wiki-child-editor"
+                  phx-hook="WikiEditor"
+                  phx-update="ignore"
+                  data-content={Phoenix.HTML.Form.input_value(@wiki_form, :content)}
+                  class="border border-base-300 rounded-lg overflow-hidden"
+                >
+                  <div data-editor-target class="min-h-[200px]"></div>
+                </div>
+              </div>
+              <div class="flex justify-end gap-2 pt-2">
+                <button type="button" phx-click="close_wiki_form" class="btn btn-ghost btn-sm">
+                  Cancel
+                </button>
+                <button type="submit" class="btn btn-primary btn-sm">Create</button>
+              </div>
+            </.form>
+          </ChatComponents.modal>
+        <% end %>
         <%= if @live_action == :mcp_servers do %>
           <%!-- MCP Servers --%>
           <header class="px-4 py-3 border-b border-base-300 flex-shrink-0">
@@ -478,6 +1060,9 @@ defmodule LiteskillWeb.ChatLive do
                 <button phx-click="export_report" class="btn btn-ghost btn-sm gap-1">
                   <.icon name="hero-arrow-down-tray-micro" class="size-4" /> Export
                 </button>
+                <button phx-click="open_wiki_export_modal" class="btn btn-ghost btn-sm gap-1">
+                  <.icon name="hero-book-open-micro" class="size-4" /> Export to Wiki
+                </button>
               </div>
             </div>
           </header>
@@ -533,94 +1118,166 @@ defmodule LiteskillWeb.ChatLive do
               </p>
             <% end %>
           </div>
+
+          <ChatComponents.modal
+            id="wiki-export-modal"
+            title="Export to Wiki"
+            show={@show_wiki_export_modal}
+            on_close="close_wiki_export_modal"
+          >
+            <.form for={%{}} phx-submit="confirm_wiki_export" class="space-y-4">
+              <div class="form-control">
+                <label class="label"><span class="label-text">Page Title</span></label>
+                <input
+                  type="text"
+                  name="title"
+                  value={@wiki_export_title}
+                  class="input input-bordered w-full"
+                  required
+                />
+              </div>
+              <div class="form-control">
+                <label class="label"><span class="label-text">Location</span></label>
+                <select name="parent_id" class="select select-bordered w-full" required>
+                  <option value="" disabled selected>Select a space...</option>
+                  <%= for node <- @wiki_export_tree do %>
+                    <ChatComponents.wiki_parent_option
+                      node={node}
+                      depth={0}
+                      selected={@wiki_export_parent_id}
+                    />
+                  <% end %>
+                </select>
+              </div>
+              <div class="flex justify-end gap-2 pt-2">
+                <button type="button" phx-click="close_wiki_export_modal" class="btn btn-ghost btn-sm">
+                  Cancel
+                </button>
+                <button type="submit" class="btn btn-primary btn-sm">Export</button>
+              </div>
+            </.form>
+          </ChatComponents.modal>
         <% end %>
-        <%= if @live_action not in [:mcp_servers, :reports, :report_show] do %>
+        <%= if ProfileLive.profile_action?(@live_action) do %>
+          <ProfileLive.profile
+            live_action={@live_action}
+            current_user={@current_user}
+            sidebar_open={@sidebar_open}
+            password_form={@password_form}
+            password_error={@password_error}
+            password_success={@password_success}
+            profile_users={@profile_users}
+            profile_groups={@profile_groups}
+            group_detail={@group_detail}
+            group_members={@group_members}
+          />
+        <% end %>
+        <%= if @live_action not in [:sources, :source_show, :wiki, :wiki_page_show, :mcp_servers, :reports, :report_show] and not ProfileLive.profile_action?(@live_action) do %>
           <%= if @conversation do %>
             <%!-- Active conversation --%>
-            <header class="px-4 py-3 border-b border-base-300 flex-shrink-0">
-              <div class="flex items-center gap-2">
-                <button
-                  :if={!@sidebar_open}
-                  phx-click="toggle_sidebar"
-                  class="btn btn-circle btn-ghost btn-sm"
-                >
-                  <.icon name="hero-bars-3-micro" class="size-5" />
-                </button>
-                <h1 class="text-lg font-semibold truncate">{@conversation.title}</h1>
-              </div>
-            </header>
+            <div class="flex flex-1 min-w-0 overflow-hidden">
+              <div class="flex-1 flex flex-col min-w-0">
+                <header class="px-4 py-3 border-b border-base-300 flex-shrink-0">
+                  <div class="flex items-center gap-2">
+                    <button
+                      :if={!@sidebar_open}
+                      phx-click="toggle_sidebar"
+                      class="btn btn-circle btn-ghost btn-sm"
+                    >
+                      <.icon name="hero-bars-3-micro" class="size-5" />
+                    </button>
+                    <h1 class="text-lg font-semibold truncate">{@conversation.title}</h1>
+                  </div>
+                </header>
 
-            <div id="messages" phx-hook="ScrollBottom" class="flex-1 overflow-y-auto px-4 py-4">
-              <%= for msg <- @messages do %>
-                <ChatComponents.message_bubble
-                  :if={msg.content && msg.content != ""}
-                  message={msg}
-                />
-                <%!-- Tool calls for completed messages (inline) --%>
-                <%= if msg.role == "assistant" && msg.stop_reason == "tool_use" do %>
-                  <%= for tc <- tool_calls_for_message(msg) do %>
+                <div id="messages" phx-hook="ScrollBottom" class="flex-1 overflow-y-auto px-4 py-4">
+                  <%= for msg <- @messages do %>
+                    <ChatComponents.message_bubble
+                      :if={msg.content && msg.content != ""}
+                      message={msg}
+                    />
+                    <ChatComponents.sources_button message={msg} />
+                    <%!-- Tool calls for completed messages (inline) --%>
+                    <%= if msg.role == "assistant" && msg.stop_reason == "tool_use" do %>
+                      <%= for tc <- tool_calls_for_message(msg) do %>
+                        <ChatComponents.tool_call_display
+                          tool_call={tc}
+                          show_actions={!@auto_confirm_tools && tc.status == "started"}
+                        />
+                      <% end %>
+                    <% end %>
+                    <ChatComponents.stream_error
+                      :if={msg.status == "failed" && msg == List.last(@messages)}
+                      error={
+                        %{
+                          title: "The AI service was unavailable",
+                          detail: "The response failed to generate. Click retry to try again."
+                        }
+                      }
+                    />
+                  <% end %>
+                  <div :if={@streaming && @stream_content != ""} class="mb-4 text-base-content">
+                    <div id="streaming-prose" phx-hook="CopyCode" class="prose prose-sm max-w-none">
+                      {LiteskillWeb.Markdown.render_streaming(@stream_content)}
+                    </div>
+                  </div>
+                  <ChatComponents.streaming_indicator :if={@streaming && @stream_content == ""} />
+                  <%!-- Pending tool calls from streaming message (rendered from socket state, not DB) --%>
+                  <%= for tc <- @pending_tool_calls do %>
                     <ChatComponents.tool_call_display
                       tool_call={tc}
                       show_actions={!@auto_confirm_tools && tc.status == "started"}
                     />
                   <% end %>
-                <% end %>
-              <% end %>
-              <div :if={@streaming && @stream_content != ""} class="mb-4 text-base-content">
-                <div id="streaming-prose" phx-hook="CopyCode" class="prose prose-sm max-w-none">
-                  {LiteskillWeb.Markdown.render_streaming(@stream_content)}
+                  <ChatComponents.stream_error :if={@stream_error} error={@stream_error} />
+                </div>
+
+                <div class="flex-shrink-0 border-t border-base-300 px-4 py-3">
+                  <ChatComponents.selected_server_badges
+                    available_tools={@available_tools}
+                    selected_server_ids={@selected_server_ids}
+                  />
+                  <.form for={@form} phx-submit="send_message" class="flex gap-2 items-center">
+                    <ChatComponents.server_picker
+                      available_tools={@available_tools}
+                      selected_server_ids={@selected_server_ids}
+                      show={@show_tool_picker}
+                      auto_confirm={@auto_confirm_tools}
+                      tools_loading={@tools_loading}
+                    />
+                    <div class="flex-1">
+                      <textarea
+                        id="message-input"
+                        name="message[content]"
+                        phx-hook="TextareaAutoResize"
+                        placeholder="Type a message..."
+                        rows="1"
+                        class="textarea textarea-bordered w-full resize-none min-h-[2.5rem] max-h-40"
+                        disabled={@streaming}
+                      >{Phoenix.HTML.Form.input_value(@form, :content)}</textarea>
+                    </div>
+                    <button
+                      :if={!@streaming}
+                      type="submit"
+                      class="btn btn-primary btn-sm"
+                    >
+                      <.icon name="hero-paper-airplane-micro" class="size-4" />
+                    </button>
+                    <button
+                      :if={@streaming}
+                      type="button"
+                      phx-click="cancel_stream"
+                      class="btn btn-error btn-sm"
+                    >
+                      <.icon name="hero-stop-micro" class="size-4" />
+                    </button>
+                  </.form>
                 </div>
               </div>
-              <ChatComponents.streaming_indicator :if={@streaming && @stream_content == ""} />
-              <%!-- Pending tool calls from streaming message (rendered from socket state, not DB) --%>
-              <%= for tc <- @pending_tool_calls do %>
-                <ChatComponents.tool_call_display
-                  tool_call={tc}
-                  show_actions={!@auto_confirm_tools && tc.status == "started"}
-                />
-              <% end %>
-            </div>
-
-            <div class="flex-shrink-0 border-t border-base-300 px-4 py-3">
-              <ChatComponents.selected_server_badges
-                available_tools={@available_tools}
-                selected_server_ids={@selected_server_ids}
+              <ChatComponents.sources_sidebar
+                show={@show_sources_sidebar}
+                sources={@sidebar_sources}
               />
-              <.form for={@form} phx-submit="send_message" class="flex gap-2 items-center">
-                <ChatComponents.server_picker
-                  available_tools={@available_tools}
-                  selected_server_ids={@selected_server_ids}
-                  show={@show_tool_picker}
-                  auto_confirm={@auto_confirm_tools}
-                  tools_loading={@tools_loading}
-                />
-                <div class="flex-1">
-                  <textarea
-                    id="message-input"
-                    name="message[content]"
-                    phx-hook="TextareaAutoResize"
-                    placeholder="Type a message..."
-                    rows="1"
-                    class="textarea textarea-bordered w-full resize-none min-h-[2.5rem] max-h-40"
-                    disabled={@streaming}
-                  >{Phoenix.HTML.Form.input_value(@form, :content)}</textarea>
-                </div>
-                <button
-                  :if={!@streaming}
-                  type="submit"
-                  class="btn btn-primary btn-sm"
-                >
-                  <.icon name="hero-paper-airplane-micro" class="size-4" />
-                </button>
-                <button
-                  :if={@streaming}
-                  type="button"
-                  phx-click="cancel_stream"
-                  class="btn btn-error btn-sm"
-                >
-                  <.icon name="hero-stop-micro" class="size-4" />
-                </button>
-              </.form>
             </div>
           <% else %>
             <%!-- New conversation prompt --%>
@@ -685,6 +1342,19 @@ defmodule LiteskillWeb.ChatLive do
           <ChatComponents.tool_detail :for={tool <- @inspecting_tools} tool={tool} />
         </div>
       </ChatComponents.modal>
+
+      <ChatComponents.source_detail_modal
+        show={@show_source_modal}
+        source={@source_modal_data}
+      />
+
+      <ChatComponents.confirm_modal
+        show={@confirm_delete_id != nil}
+        title="Archive conversation"
+        message="Are you sure you want to archive this conversation?"
+        confirm_event="delete_conversation"
+        cancel_event="cancel_delete_conversation"
+      />
     </div>
     """
   end
@@ -699,6 +1369,298 @@ defmodule LiteskillWeb.ChatLive do
   @impl true
   def handle_event("close_sidebar", _params, socket) do
     {:noreply, assign(socket, sidebar_open: false)}
+  end
+
+  @impl true
+  def handle_event("source_search", %{"search" => search}, socket) do
+    user_id = socket.assigns.current_user.id
+    source_ref = socket.assigns.current_source.id
+
+    result =
+      Liteskill.DataSources.list_documents_paginated(source_ref, user_id,
+        page: 1,
+        search: if(search == "", do: nil, else: search),
+        parent_id: nil
+      )
+
+    {:noreply, assign(socket, source_search: search, source_documents: result)}
+  end
+
+  @impl true
+  def handle_event("source_page", %{"page" => page}, socket) do
+    user_id = socket.assigns.current_user.id
+    source_ref = socket.assigns.current_source.id
+    search = socket.assigns.source_search
+
+    result =
+      Liteskill.DataSources.list_documents_paginated(source_ref, user_id,
+        page: String.to_integer(page),
+        search: if(search == "", do: nil, else: search),
+        parent_id: nil
+      )
+
+    {:noreply, assign(socket, source_documents: result)}
+  end
+
+  # --- RAG Query Events ---
+
+  @impl true
+  def handle_event("open_rag_query", _params, socket) do
+    {:noreply,
+     assign(socket,
+       show_rag_query: true,
+       rag_query_results: [],
+       rag_query_error: nil,
+       rag_query_loading: false
+     )}
+  end
+
+  @impl true
+  def handle_event("close_rag_query", _params, socket) do
+    {:noreply,
+     assign(socket,
+       show_rag_query: false,
+       rag_query_results: [],
+       rag_query_error: nil,
+       rag_query_loading: false
+     )}
+  end
+
+  @impl true
+  def handle_event("rag_search", %{"collection_id" => coll_id, "query" => query}, socket) do
+    query = String.trim(query)
+
+    if query == "" do
+      {:noreply, assign(socket, rag_query_error: "Please enter a search query")}
+    else
+      user_id = socket.assigns.current_user.id
+      lv = self()
+
+      Task.start(fn ->
+        result =
+          Liteskill.Rag.search_and_rerank(coll_id, query, user_id, top_n: 10, search_limit: 50)
+
+        send(lv, {:rag_search_result, result})
+      end)
+
+      {:noreply,
+       assign(socket, rag_query_loading: true, rag_query_results: [], rag_query_error: nil)}
+    end
+  end
+
+  # --- Sources Sidebar Events ---
+
+  @impl true
+  def handle_event("toggle_sources_sidebar", %{"message-id" => message_id}, socket) do
+    message = Enum.find(socket.assigns.messages, &(&1.id == message_id))
+
+    if message && message.rag_sources not in [nil, []] do
+      if socket.assigns.show_sources_sidebar do
+        {:noreply, assign(socket, show_sources_sidebar: false, sidebar_sources: [])}
+      else
+        {:noreply,
+         assign(socket, show_sources_sidebar: true, sidebar_sources: message.rag_sources)}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("close_sources_sidebar", _params, socket) do
+    {:noreply, assign(socket, show_sources_sidebar: false, sidebar_sources: [])}
+  end
+
+  @impl true
+  def handle_event("show_source_modal", %{"chunk-id" => chunk_id}, socket) do
+    source = Enum.find(socket.assigns.sidebar_sources, &(&1["chunk_id"] == chunk_id))
+
+    if source do
+      {:noreply, assign(socket, show_source_modal: true, source_modal_data: source)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("close_source_modal", _params, socket) do
+    {:noreply, assign(socket, show_source_modal: false)}
+  end
+
+  @impl true
+  def handle_event("show_source", %{"doc-id" => doc_id}, socket) do
+    # Find the source in any assistant message's rag_sources
+    {source, _msg_sources} = find_source_by_doc_id(socket.assigns.messages, doc_id)
+
+    source_data =
+      source || lookup_source_from_db(doc_id, socket.assigns.current_user.id)
+
+    if source_data do
+      {:noreply,
+       assign(socket,
+         show_source_modal: true,
+         source_modal_data: source_data
+       )}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # --- Wiki Events ---
+
+  @impl true
+  def handle_event("show_wiki_form", params, socket) do
+    parent_id = params["parent-id"]
+
+    {:noreply,
+     assign(socket,
+       show_wiki_form: true,
+       wiki_parent_id: parent_id,
+       wiki_editing: nil,
+       wiki_form: to_form(%{"title" => "", "content" => ""}, as: :wiki_page)
+     )}
+  end
+
+  @impl true
+  def handle_event("close_wiki_form", _params, socket) do
+    {:noreply, assign(socket, show_wiki_form: false, wiki_editing: nil)}
+  end
+
+  @impl true
+  def handle_event("create_wiki_page", %{"wiki_page" => params}, socket) do
+    user_id = socket.assigns.current_user.id
+    source_ref = socket.assigns.current_source.id
+    parent_id = socket.assigns.wiki_parent_id
+
+    attrs = %{
+      title: String.trim(params["title"]),
+      content: params["content"] || "",
+      content_type: "markdown"
+    }
+
+    result =
+      if parent_id do
+        Liteskill.DataSources.create_child_document(source_ref, parent_id, attrs, user_id)
+      else
+        Liteskill.DataSources.create_document(source_ref, attrs, user_id)
+      end
+
+    case result do
+      {:ok, doc} ->
+        enqueue_wiki_sync(doc.id, user_id, "upsert")
+
+        {:noreply,
+         socket
+         |> assign(show_wiki_form: false)
+         |> push_navigate(to: ~p"/wiki/#{doc.id}")}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Failed to create page")}
+    end
+  end
+
+  @impl true
+  def handle_event("edit_wiki_page", _params, socket) do
+    doc = socket.assigns.wiki_document
+
+    {:noreply,
+     assign(socket,
+       wiki_editing: doc,
+       wiki_form: to_form(%{"title" => doc.title, "content" => doc.content || ""}, as: :wiki_page)
+     )}
+  end
+
+  @impl true
+  def handle_event("cancel_wiki_edit", _params, socket) do
+    {:noreply, assign(socket, wiki_editing: nil)}
+  end
+
+  @impl true
+  def handle_event("update_wiki_page", %{"wiki_page" => params}, socket) do
+    user_id = socket.assigns.current_user.id
+    doc = socket.assigns.wiki_editing
+
+    attrs = %{title: String.trim(params["title"]), content: params["content"] || ""}
+
+    case Liteskill.DataSources.update_document(doc.id, attrs, user_id) do
+      {:ok, updated} ->
+        enqueue_wiki_sync(updated.id, user_id, "upsert")
+
+        {:noreply,
+         socket
+         |> assign(show_wiki_form: false, wiki_editing: nil, wiki_document: updated)
+         |> reload_wiki_page()}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Failed to update page")}
+    end
+  end
+
+  @impl true
+  def handle_event("delete_wiki_page", _params, socket) do
+    user_id = socket.assigns.current_user.id
+    doc = socket.assigns.wiki_document
+
+    case Liteskill.DataSources.delete_document(doc.id, user_id) do
+      {:ok, _} ->
+        enqueue_wiki_sync(doc.id, user_id, "delete")
+
+        redirect_to =
+          if doc.parent_document_id,
+            do: ~p"/wiki/#{doc.parent_document_id}",
+            else: ~p"/wiki"
+
+        {:noreply, push_navigate(socket, to: redirect_to)}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Failed to delete page")}
+    end
+  end
+
+  @impl true
+  def handle_event("open_wiki_export_modal", _params, socket) do
+    user_id = socket.assigns.current_user.id
+    tree = Liteskill.DataSources.document_tree("builtin:wiki", user_id)
+
+    {:noreply,
+     assign(socket,
+       show_wiki_export_modal: true,
+       wiki_export_title: socket.assigns.report.title,
+       wiki_export_parent_id: nil,
+       wiki_export_tree: tree
+     )}
+  end
+
+  @impl true
+  def handle_event("close_wiki_export_modal", _params, socket) do
+    {:noreply, assign(socket, show_wiki_export_modal: false)}
+  end
+
+  @impl true
+  def handle_event("confirm_wiki_export", %{"title" => title, "parent_id" => parent_id}, socket) do
+    if parent_id == "" do
+      {:noreply, put_flash(socket, :error, "Please select a space for the wiki page")}
+    else
+      user_id = socket.assigns.current_user.id
+      report = socket.assigns.report
+
+      case Liteskill.DataSources.export_report_to_wiki(report.id, user_id,
+             title: title,
+             parent_id: parent_id
+           ) do
+        {:ok, doc} ->
+          enqueue_wiki_sync(doc.id, user_id, "upsert")
+
+          {:noreply,
+           socket
+           |> assign(show_wiki_export_modal: false)
+           |> put_flash(:info, "Report exported to wiki")
+           |> push_navigate(to: ~p"/wiki/#{doc.id}")}
+
+        {:error, _} ->
+          {:noreply, put_flash(socket, :error, "Failed to export report to wiki")}
+      end
+    end
   end
 
   @impl true
@@ -757,6 +1719,7 @@ defmodule LiteskillWeb.ChatLive do
                  form: to_form(%{"content" => ""}, as: :message),
                  streaming: true,
                  stream_content: "",
+                 stream_error: nil,
                  pending_tool_calls: [],
                  stream_task_pid: pid
                )}
@@ -769,8 +1732,19 @@ defmodule LiteskillWeb.ChatLive do
   end
 
   @impl true
-  def handle_event("delete_conversation", %{"id" => id}, socket) do
+  def handle_event("confirm_delete_conversation", %{"id" => id}, socket) do
+    {:noreply, assign(socket, confirm_delete_id: id)}
+  end
+
+  @impl true
+  def handle_event("cancel_delete_conversation", _params, socket) do
+    {:noreply, assign(socket, confirm_delete_id: nil)}
+  end
+
+  @impl true
+  def handle_event("delete_conversation", _params, socket) do
     user_id = socket.assigns.current_user.id
+    id = socket.assigns.confirm_delete_id
 
     case Chat.archive_conversation(id, user_id) do
       {:ok, _} ->
@@ -778,17 +1752,42 @@ defmodule LiteskillWeb.ChatLive do
 
         {:noreply,
          socket
-         |> assign(conversations: conversations)
+         |> assign(conversations: conversations, confirm_delete_id: nil)
          |> push_navigate(to: ~p"/")}
 
       {:error, _} ->
-        {:noreply, put_flash(socket, :error, "Failed to delete conversation")}
+        {:noreply,
+         socket
+         |> assign(confirm_delete_id: nil)
+         |> put_flash(:error, "Failed to delete conversation")}
     end
   end
 
   @impl true
   def handle_event("cancel_stream", _params, socket) do
     {:noreply, recover_stuck_stream(socket)}
+  end
+
+  @impl true
+  def handle_event("retry_message", _params, socket) do
+    conversation = socket.assigns.conversation
+    user_id = socket.assigns.current_user.id
+
+    if conversation do
+      pid = trigger_llm_stream(conversation, user_id, socket)
+
+      {:noreply,
+       socket
+       |> assign(
+         streaming: true,
+         stream_content: "",
+         stream_error: nil,
+         pending_tool_calls: [],
+         stream_task_pid: pid
+       )}
+    else
+      {:noreply, socket}
+    end
   end
 
   # --- Tool Picker Events ---
@@ -1202,6 +2201,15 @@ defmodule LiteskillWeb.ChatLive do
      assign(socket, inspecting_server: nil, inspecting_tools: [], inspecting_tools_loading: false)}
   end
 
+  # --- Profile Event Delegation ---
+
+  @profile_events ~w(change_password promote_user demote_user create_group
+    admin_delete_group view_group admin_add_member admin_remove_member set_accent_color)
+
+  def handle_event(event, params, socket) when event in @profile_events do
+    ProfileLive.handle_event(event, params, socket)
+  end
+
   # --- PubSub Handlers ---
 
   @impl true
@@ -1311,6 +2319,29 @@ defmodule LiteskillWeb.ChatLive do
     end
   end
 
+  def handle_info({:rag_search_result, {:ok, results}}, socket) do
+    chunks = Enum.map(results, & &1.chunk)
+    preloaded = Repo.preload(chunks, document: :source)
+
+    enriched =
+      Enum.zip_with(results, preloaded, fn result, chunk ->
+        %{result | chunk: chunk}
+      end)
+
+    {:noreply, assign(socket, rag_query_loading: false, rag_query_results: enriched)}
+  end
+
+  def handle_info({:rag_search_result, {:error, reason}}, socket) do
+    message =
+      case reason do
+        %{status: status} -> "Search failed (HTTP #{status})"
+        _ -> "Search failed: #{inspect(reason)}"
+      end
+
+    {:noreply,
+     assign(socket, rag_query_loading: false, rag_query_results: [], rag_query_error: message)}
+  end
+
   def handle_info(:reload_tool_calls, socket) do
     user_id = socket.assigns.current_user.id
     conversation = socket.assigns.conversation
@@ -1350,7 +2381,7 @@ defmodule LiteskillWeb.ChatLive do
          %{event_type: "AssistantStreamStarted"},
          socket
        ) do
-    assign(socket, streaming: true, stream_content: "")
+    assign(socket, streaming: true, stream_content: "", stream_error: nil)
   end
 
   defp handle_event_store_event(
@@ -1372,12 +2403,13 @@ defmodule LiteskillWeb.ChatLive do
   end
 
   defp handle_event_store_event(
-         %{event_type: "AssistantStreamFailed"},
+         %{event_type: "AssistantStreamFailed", data: data},
          socket
        ) do
+    error = friendly_stream_error(data["error_type"], data["error_message"])
+
     socket
-    |> assign(streaming: false, stream_content: "")
-    |> put_flash(:error, "Assistant response failed")
+    |> assign(streaming: false, stream_content: "", stream_error: error)
   end
 
   defp handle_event_store_event(
@@ -1441,15 +2473,33 @@ defmodule LiteskillWeb.ChatLive do
 
     llm_messages = build_llm_messages(messages)
 
-    opts =
-      if conversation.system_prompt do
-        [system: conversation.system_prompt]
+    # RAG context augmentation
+    last_user_msg = messages |> Enum.filter(&(&1.role == "user")) |> List.last()
+    query = if last_user_msg, do: last_user_msg.content
+
+    {rag_results, rag_sources_json} =
+      if query && String.trim(query) != "" do
+        case Liteskill.Rag.augment_context(query, user_id) do
+          {:ok, results} when results != [] ->
+            {results, Liteskill.LLM.RagContext.serialize_sources(results)}
+
+          _ ->
+            {[], nil}
+        end
       else
-        []
+        {[], nil}
       end
+
+    system_prompt =
+      Liteskill.LLM.RagContext.build_system_prompt(rag_results, conversation.system_prompt)
+
+    opts = if system_prompt, do: [system: system_prompt], else: []
 
     # Add tool options if tools are selected
     opts = opts ++ build_tool_opts(socket)
+
+    # Pass rag_sources through the event store so they survive navigation
+    opts = if rag_sources_json, do: [{:rag_sources, rag_sources_json} | opts], else: opts
 
     {:ok, pid} =
       Task.start(fn ->
@@ -1500,6 +2550,30 @@ defmodule LiteskillWeb.ChatLive do
         auto_confirm: socket.assigns.auto_confirm_tools,
         user_id: user_id
       ]
+    end
+  end
+
+  defp reload_wiki_page(socket) do
+    user_id = socket.assigns.current_user.id
+    doc_id = socket.assigns.wiki_document.id
+
+    case Liteskill.DataSources.get_document(doc_id, user_id) do
+      {:ok, doc} ->
+        space = socket.assigns.wiki_space
+
+        tree =
+          if space do
+            Liteskill.DataSources.space_tree("builtin:wiki", space.id, user_id)
+          else
+            []
+          end
+
+        assign(socket, wiki_document: doc, wiki_tree: tree, wiki_sidebar_tree: tree)
+
+      # coveralls-ignore-start
+      {:error, _} ->
+        socket
+        # coveralls-ignore-stop
     end
   end
 
@@ -1709,6 +2783,11 @@ defmodule LiteskillWeb.ChatLive do
     end
   end
 
+  defp get_wiki_source, do: Liteskill.BuiltinSources.find("builtin:wiki")
+
+  defp source_id_from_url("builtin-" <> rest), do: "builtin:" <> rest
+  defp source_id_from_url(id), do: id
+
   defp maybe_unsubscribe(socket) do
     case socket.assigns[:conversation] do
       %{stream_id: stream_id} when not is_nil(stream_id) ->
@@ -1799,6 +2878,52 @@ defmodule LiteskillWeb.ChatLive do
     end
   end
 
+  defp find_source_by_doc_id(messages, doc_id) do
+    msg =
+      Enum.find(messages, fn m ->
+        m.role == "assistant" && m.rag_sources &&
+          Enum.any?(m.rag_sources, &(&1["document_id"] == doc_id))
+      end)
+
+    if msg do
+      source = Enum.find(msg.rag_sources, &(&1["document_id"] == doc_id))
+      {source, msg.rag_sources}
+    else
+      {nil, []}
+    end
+  end
+
+  defp lookup_source_from_db(doc_id, user_id) do
+    alias Liteskill.Rag
+
+    with {:ok, doc} <- Rag.get_document(doc_id, user_id) do
+      doc = Liteskill.Repo.preload(doc, :source)
+      wiki_doc_id = get_in(doc.metadata || %{}, ["wiki_document_id"])
+
+      %{
+        "chunk_id" => nil,
+        "document_id" => doc.id,
+        "document_title" => doc.title,
+        "source_name" => doc.source.name,
+        "content" => doc.content,
+        "position" => nil,
+        "relevance_score" => nil,
+        "source_uri" => if(wiki_doc_id, do: "/wiki/#{wiki_doc_id}")
+      }
+    else
+      _ -> nil
+    end
+  end
+
+  defp enqueue_wiki_sync(wiki_document_id, user_id, action) do
+    Liteskill.Rag.WikiSyncWorker.new(%{
+      "wiki_document_id" => wiki_document_id,
+      "user_id" => user_id,
+      "action" => action
+    })
+    |> Oban.insert()
+  end
+
   defp format_tool_error(%{status: status, body: body}) when is_binary(body),
     do: "HTTP #{status}: #{String.slice(body, 0..100)}"
 
@@ -1806,4 +2931,40 @@ defmodule LiteskillWeb.ChatLive do
   defp format_tool_error(%Req.TransportError{reason: reason}), do: "Connection error: #{reason}"
   defp format_tool_error(reason) when is_binary(reason), do: reason
   defp format_tool_error(reason), do: inspect(reason)
+
+  defp friendly_stream_error("max_retries_exceeded", _msg) do
+    %{
+      title: "The AI service is currently busy",
+      detail: "Too many requests — please wait a moment and retry."
+    }
+  end
+
+  defp friendly_stream_error("request_error", msg) when is_binary(msg) do
+    cond do
+      msg =~ "timeout" or msg =~ "Timeout" ->
+        %{
+          title: "Request timed out",
+          detail: "The AI service took too long to respond. Please try again."
+        }
+
+      msg =~ "closed" or msg =~ "connection" ->
+        %{
+          title: "Connection lost",
+          detail: "Lost connection to the AI service. Please try again."
+        }
+
+      true ->
+        %{
+          title: "Something went wrong",
+          detail: "An unexpected error occurred. Please try again."
+        }
+    end
+  end
+
+  defp friendly_stream_error(_type, _msg) do
+    %{
+      title: "Something went wrong",
+      detail: "An unexpected error occurred. Please try again."
+    }
+  end
 end

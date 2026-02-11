@@ -47,3 +47,6 @@ config :phoenix,
   sort_verified_routes_query_params: true
 
 config :liteskill, Oban, testing: :manual
+
+# Used by Application to skip ensure_admin_user Task (sandbox not available)
+config :liteskill, env: :test

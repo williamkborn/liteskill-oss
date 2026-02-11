@@ -651,5 +651,384 @@ defmodule Liteskill.RagTest do
       assert {:error, :not_found} =
                Rag.search_and_rerank(coll.id, "q", other.id, plug: {Req.Test, CohereClient})
     end
+
+    test "falls back to top_n search results when rerank fails", %{owner: owner} do
+      {:ok, coll} = create_collection(owner.id)
+      {:ok, source} = create_source(coll.id, owner.id)
+      {:ok, doc} = create_document(source.id, owner.id)
+
+      embedding = List.duplicate(0.5, 1024)
+
+      agent = Agent.start_link(fn -> 0 end) |> elem(1)
+
+      Req.Test.stub(CohereClient, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        decoded = Jason.decode!(body)
+        call_num = Agent.get_and_update(agent, fn n -> {n, n + 1} end)
+
+        cond do
+          # First call: embed chunks
+          call_num == 0 ->
+            conn
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.send_resp(
+              200,
+              Jason.encode!(%{"embeddings" => %{"float" => [embedding, embedding]}})
+            )
+
+          # Second call: search query embed
+          Map.has_key?(decoded, "input_type") ->
+            conn
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.send_resp(
+              200,
+              Jason.encode!(%{"embeddings" => %{"float" => [embedding]}})
+            )
+
+          # Third call: rerank - return error
+          Map.has_key?(decoded, "query") ->
+            conn
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.send_resp(500, Jason.encode!(%{"message" => "rerank failed"}))
+        end
+      end)
+
+      chunks = [
+        %{content: "first", position: 0},
+        %{content: "second", position: 1}
+      ]
+
+      {:ok, _} = Rag.embed_chunks(doc.id, chunks, owner.id, plug: {Req.Test, CohereClient})
+
+      assert {:ok, results} =
+               Rag.search_and_rerank(coll.id, "query", owner.id,
+                 search_limit: 50,
+                 top_n: 2,
+                 plug: {Req.Test, CohereClient}
+               )
+
+      assert length(results) == 2
+      assert Enum.all?(results, fn r -> r.relevance_score == nil end)
+    end
+  end
+
+  # --- Wiki Sync Helpers ---
+
+  describe "find_or_create_wiki_collection/1" do
+    test "creates wiki collection on first call", %{owner: owner} do
+      assert {:ok, coll} = Rag.find_or_create_wiki_collection(owner.id)
+      assert coll.name == "Wiki"
+      assert coll.user_id == owner.id
+    end
+
+    test "returns existing wiki collection on second call", %{owner: owner} do
+      {:ok, coll1} = Rag.find_or_create_wiki_collection(owner.id)
+      {:ok, coll2} = Rag.find_or_create_wiki_collection(owner.id)
+      assert coll1.id == coll2.id
+    end
+
+    test "creates separate collections per user", %{owner: owner, other: other} do
+      {:ok, coll1} = Rag.find_or_create_wiki_collection(owner.id)
+      {:ok, coll2} = Rag.find_or_create_wiki_collection(other.id)
+      assert coll1.id != coll2.id
+    end
+  end
+
+  describe "find_or_create_wiki_source/2" do
+    test "creates wiki source on first call", %{owner: owner} do
+      {:ok, coll} = Rag.find_or_create_wiki_collection(owner.id)
+      assert {:ok, source} = Rag.find_or_create_wiki_source(coll.id, owner.id)
+      assert source.name == "wiki"
+      assert source.collection_id == coll.id
+    end
+
+    test "returns existing wiki source on second call", %{owner: owner} do
+      {:ok, coll} = Rag.find_or_create_wiki_collection(owner.id)
+      {:ok, src1} = Rag.find_or_create_wiki_source(coll.id, owner.id)
+      {:ok, src2} = Rag.find_or_create_wiki_source(coll.id, owner.id)
+      assert src1.id == src2.id
+    end
+  end
+
+  describe "find_rag_document_by_wiki_id/2" do
+    test "finds document by wiki_document_id metadata", %{owner: owner} do
+      {:ok, coll} = create_collection(owner.id)
+      {:ok, source} = create_source(coll.id, owner.id)
+      wiki_id = Ecto.UUID.generate()
+
+      {:ok, doc} =
+        create_document(source.id, owner.id, %{
+          metadata: %{"wiki_document_id" => wiki_id}
+        })
+
+      assert {:ok, found} = Rag.find_rag_document_by_wiki_id(wiki_id, owner.id)
+      assert found.id == doc.id
+    end
+
+    test "returns not_found when no match", %{owner: owner} do
+      assert {:error, :not_found} =
+               Rag.find_rag_document_by_wiki_id(Ecto.UUID.generate(), owner.id)
+    end
+
+    test "scoped to user_id", %{owner: owner, other: other} do
+      {:ok, coll} = create_collection(owner.id)
+      {:ok, source} = create_source(coll.id, owner.id)
+      wiki_id = Ecto.UUID.generate()
+
+      {:ok, _doc} =
+        create_document(source.id, owner.id, %{
+          metadata: %{"wiki_document_id" => wiki_id}
+        })
+
+      assert {:error, :not_found} = Rag.find_rag_document_by_wiki_id(wiki_id, other.id)
+    end
+  end
+
+  describe "delete_document_chunks/1" do
+    test "deletes all chunks for a document", %{owner: owner} do
+      {:ok, coll} = create_collection(owner.id)
+      {:ok, source} = create_source(coll.id, owner.id)
+      {:ok, doc} = create_document(source.id, owner.id)
+
+      emb = List.duplicate(0.1, 1024)
+      stub_embed([emb, emb])
+
+      chunks = [
+        %{content: "chunk one", position: 0},
+        %{content: "chunk two", position: 1}
+      ]
+
+      {:ok, _} = Rag.embed_chunks(doc.id, chunks, owner.id, plug: {Req.Test, CohereClient})
+
+      db_chunks = Repo.all(from(c in Chunk, where: c.document_id == ^doc.id))
+      assert length(db_chunks) == 2
+
+      assert {:ok, 2} = Rag.delete_document_chunks(doc.id)
+
+      db_chunks = Repo.all(from(c in Chunk, where: c.document_id == ^doc.id))
+      assert db_chunks == []
+    end
+
+    test "returns 0 when no chunks exist" do
+      assert {:ok, 0} = Rag.delete_document_chunks(Ecto.UUID.generate())
+    end
+  end
+
+  # --- Augment Context ---
+
+  describe "augment_context/3" do
+    test "returns results with preloaded document.source", %{owner: owner} do
+      {:ok, coll} = create_collection(owner.id)
+      {:ok, source} = create_source(coll.id, owner.id, %{name: "test-source"})
+      {:ok, doc} = create_document(source.id, owner.id, %{title: "Test Doc"})
+
+      embedding = List.duplicate(0.1, 1024)
+
+      agent = Agent.start_link(fn -> :embed end) |> elem(1)
+
+      Req.Test.stub(CohereClient, fn conn ->
+        response =
+          case Agent.get_and_update(agent, fn state ->
+                 case state do
+                   :embed -> {:embed, :query}
+                   :query -> {:query, :query}
+                 end
+               end) do
+            :embed -> %{"embeddings" => %{"float" => [embedding]}}
+            :query -> %{"embeddings" => %{"float" => [embedding]}}
+          end
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, Jason.encode!(response))
+      end)
+
+      chunks = [%{content: "hello world", position: 0}]
+      assert {:ok, _} = Rag.embed_chunks(doc.id, chunks, owner.id, plug: {Req.Test, CohereClient})
+
+      assert {:ok, results} =
+               Rag.augment_context("hello", owner.id, plug: {Req.Test, CohereClient})
+
+      assert length(results) >= 1
+      first = hd(results)
+      assert first.chunk.document.title == "Test Doc"
+      assert first.chunk.document.source.name == "test-source"
+      assert first.relevance_score == nil
+    end
+
+    test "returns empty list when user has no chunks", %{owner: owner} do
+      stub_embed([[0.1] |> List.duplicate(1024) |> List.flatten()])
+
+      assert {:ok, []} =
+               Rag.augment_context("hello", owner.id, plug: {Req.Test, CohereClient})
+    end
+
+    test "returns empty list on embed failure", %{owner: owner} do
+      Req.Test.stub(CohereClient, fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(500, Jason.encode!(%{"message" => "error"}))
+      end)
+
+      assert {:ok, []} =
+               Rag.augment_context("hello", owner.id, plug: {Req.Test, CohereClient})
+    end
+
+    test "reranks when 40+ results and returns ranked", %{owner: owner} do
+      {:ok, coll} = create_collection(owner.id)
+      {:ok, source} = create_source(coll.id, owner.id)
+      {:ok, doc} = create_document(source.id, owner.id)
+
+      embedding = List.duplicate(0.1, 1024)
+      chunk_count = 45
+
+      agent = Agent.start_link(fn -> 0 end) |> elem(1)
+
+      Req.Test.stub(CohereClient, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        decoded = Jason.decode!(body)
+        call_num = Agent.get_and_update(agent, fn n -> {n, n + 1} end)
+
+        cond do
+          # First call: embed chunks
+          call_num == 0 ->
+            conn
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.send_resp(
+              200,
+              Jason.encode!(%{
+                "embeddings" => %{"float" => List.duplicate(embedding, chunk_count)}
+              })
+            )
+
+          # Second call: augment_context query embed
+          Map.has_key?(decoded, "input_type") ->
+            conn
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.send_resp(
+              200,
+              Jason.encode!(%{"embeddings" => %{"float" => [embedding]}})
+            )
+
+          # Third call: rerank
+          Map.has_key?(decoded, "query") ->
+            results =
+              Enum.map(0..39, fn i ->
+                %{"index" => i, "relevance_score" => 1.0 - i * 0.01}
+              end)
+
+            conn
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.send_resp(200, Jason.encode!(%{"results" => results}))
+        end
+      end)
+
+      chunks = Enum.map(0..(chunk_count - 1), fn i -> %{content: "chunk #{i}", position: i} end)
+
+      {:ok, _} = Rag.embed_chunks(doc.id, chunks, owner.id, plug: {Req.Test, CohereClient})
+
+      assert {:ok, results} =
+               Rag.augment_context("test", owner.id, plug: {Req.Test, CohereClient})
+
+      assert length(results) == 40
+      assert hd(results).relevance_score != nil
+    end
+
+    test "falls back when rerank fails with 40+ results", %{owner: owner} do
+      {:ok, coll} = create_collection(owner.id)
+      {:ok, source} = create_source(coll.id, owner.id)
+      {:ok, doc} = create_document(source.id, owner.id)
+
+      embedding = List.duplicate(0.1, 1024)
+      chunk_count = 45
+
+      agent = Agent.start_link(fn -> 0 end) |> elem(1)
+
+      Req.Test.stub(CohereClient, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        decoded = Jason.decode!(body)
+        call_num = Agent.get_and_update(agent, fn n -> {n, n + 1} end)
+
+        cond do
+          call_num == 0 ->
+            conn
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.send_resp(
+              200,
+              Jason.encode!(%{
+                "embeddings" => %{"float" => List.duplicate(embedding, chunk_count)}
+              })
+            )
+
+          Map.has_key?(decoded, "input_type") ->
+            conn
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.send_resp(
+              200,
+              Jason.encode!(%{"embeddings" => %{"float" => [embedding]}})
+            )
+
+          Map.has_key?(decoded, "query") ->
+            conn
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.send_resp(500, Jason.encode!(%{"message" => "rerank error"}))
+        end
+      end)
+
+      chunks = Enum.map(0..(chunk_count - 1), fn i -> %{content: "chunk #{i}", position: i} end)
+
+      {:ok, _} = Rag.embed_chunks(doc.id, chunks, owner.id, plug: {Req.Test, CohereClient})
+
+      assert {:ok, results} =
+               Rag.augment_context("test", owner.id, plug: {Req.Test, CohereClient})
+
+      assert length(results) == 40
+      assert Enum.all?(results, fn r -> r.relevance_score == nil end)
+    end
+
+    test "searches across multiple collections", %{owner: owner} do
+      {:ok, coll1} = create_collection(owner.id, %{name: "Collection A"})
+      {:ok, source1} = create_source(coll1.id, owner.id, %{name: "src-a"})
+      {:ok, doc1} = create_document(source1.id, owner.id, %{title: "Doc A"})
+
+      {:ok, coll2} = create_collection(owner.id, %{name: "Collection B"})
+      {:ok, source2} = create_source(coll2.id, owner.id, %{name: "src-b"})
+      {:ok, doc2} = create_document(source2.id, owner.id, %{title: "Doc B"})
+
+      embedding = List.duplicate(0.1, 1024)
+      call_count = Agent.start_link(fn -> 0 end) |> elem(1)
+
+      Req.Test.stub(CohereClient, fn conn ->
+        n = Agent.get_and_update(call_count, fn c -> {c, c + 1} end)
+
+        response =
+          case n do
+            0 -> %{"embeddings" => %{"float" => [embedding]}}
+            1 -> %{"embeddings" => %{"float" => [embedding]}}
+            _ -> %{"embeddings" => %{"float" => [embedding]}}
+          end
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, Jason.encode!(response))
+      end)
+
+      chunks1 = [%{content: "chunk from A", position: 0}]
+
+      assert {:ok, _} =
+               Rag.embed_chunks(doc1.id, chunks1, owner.id, plug: {Req.Test, CohereClient})
+
+      chunks2 = [%{content: "chunk from B", position: 0}]
+
+      assert {:ok, _} =
+               Rag.embed_chunks(doc2.id, chunks2, owner.id, plug: {Req.Test, CohereClient})
+
+      assert {:ok, results} =
+               Rag.augment_context("test", owner.id, plug: {Req.Test, CohereClient})
+
+      contents = Enum.map(results, & &1.chunk.content)
+      assert "chunk from A" in contents
+      assert "chunk from B" in contents
+    end
   end
 end

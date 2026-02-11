@@ -5,7 +5,7 @@ defmodule Liteskill.Rag.CohereClient do
   Supports embed-v4 and rerank-v3.5.
   """
 
-  @embed_model "cohere.embed-v4"
+  @embed_model "us.cohere.embed-v4:0"
   @rerank_model "cohere.rerank-v3-5:0"
 
   @doc """

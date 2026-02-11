@@ -294,6 +294,13 @@ defmodule Liteskill.Chat do
     end
   end
 
+  def update_message_rag_sources(message_id, rag_sources) do
+    case Repo.get(Message, message_id) do
+      nil -> {:error, :not_found}
+      msg -> msg |> Message.changeset(%{rag_sources: rag_sources}) |> Repo.update()
+    end
+  end
+
   def get_conversation_tree(conversation_id, user_id) do
     with {:ok, conversation} <- authorize_conversation(conversation_id, user_id) do
       # Find root

@@ -24,16 +24,26 @@ import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/liteskill"
 import topbar from "../vendor/topbar"
-import {SectionEditor} from "./codemirror_hook"
+import {SectionEditor, WikiEditor} from "./codemirror_hook"
 
 const Hooks = {
   SectionEditor,
+  WikiEditor,
 
   SidebarNav: {
     mounted() {
       this.handleEvent("nav", () => {
         if (window.innerWidth < 640) {
           this.pushEvent("close_sidebar", {})
+        }
+      })
+      this.handleEvent("set-accent", ({color}) => {
+        if (color && color !== "orange") {
+          localStorage.setItem("phx:accent", color)
+          document.documentElement.setAttribute("data-accent", color)
+        } else {
+          localStorage.removeItem("phx:accent")
+          document.documentElement.removeAttribute("data-accent")
         }
       })
     }
@@ -46,6 +56,7 @@ const Hooks = {
         if (this.isNearBottom()) this.scrollToBottom()
       })
       this.observer.observe(this.el, { childList: true, subtree: true, characterData: true })
+      this.setupCiteHighlight()
     },
     updated() {
       if (this.isNearBottom()) this.scrollToBottom()
@@ -58,6 +69,26 @@ const Hooks = {
     },
     scrollToBottom() {
       this.el.scrollTop = this.el.scrollHeight
+    },
+    setupCiteHighlight() {
+      this.el.addEventListener("mouseenter", (e) => {
+        const cite = e.target.closest(".rag-cite")
+        if (!cite) return
+        const docId = cite.getAttribute("phx-value-doc-id")
+        if (!docId) return
+        document.querySelectorAll(`.source-item[data-doc-id="${docId}"]`).forEach(el => {
+          el.classList.add("source-item-highlight")
+        })
+      }, true)
+      this.el.addEventListener("mouseleave", (e) => {
+        const cite = e.target.closest(".rag-cite")
+        if (!cite) return
+        const docId = cite.getAttribute("phx-value-doc-id")
+        if (!docId) return
+        document.querySelectorAll(`.source-item[data-doc-id="${docId}"]`).forEach(el => {
+          el.classList.remove("source-item-highlight")
+        })
+      }, true)
     }
   },
 

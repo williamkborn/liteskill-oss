@@ -93,6 +93,49 @@
   --noise: 0;
 }
 
+/* Accent color overrides — keyed on data-accent attribute on <html> */
+[data-accent="pink"] {
+  --color-primary: oklch(65% 0.2 0);
+  --color-primary-content: oklch(98% 0.01 0);
+}
+[data-accent="red"] {
+  --color-primary: oklch(55% 0.25 25);
+  --color-primary-content: oklch(98% 0.01 25);
+}
+/* orange is the default — no override needed */
+[data-accent="yellow"] {
+  --color-primary: oklch(80% 0.18 95);
+  --color-primary-content: oklch(25% 0.05 95);
+}
+[data-accent="green"] {
+  --color-primary: oklch(60% 0.18 145);
+  --color-primary-content: oklch(98% 0.01 145);
+}
+[data-accent="cyan"] {
+  --color-primary: oklch(70% 0.15 195);
+  --color-primary-content: oklch(20% 0.03 195);
+}
+[data-accent="blue"] {
+  --color-primary: oklch(60% 0.2 260);
+  --color-primary-content: oklch(98% 0.01 260);
+}
+[data-accent="royal-blue"] {
+  --color-primary: oklch(50% 0.25 270);
+  --color-primary-content: oklch(98% 0.01 270);
+}
+[data-accent="purple"] {
+  --color-primary: oklch(55% 0.25 300);
+  --color-primary-content: oklch(98% 0.01 300);
+}
+[data-accent="brown"] {
+  --color-primary: oklch(50% 0.1 50);
+  --color-primary-content: oklch(98% 0.01 50);
+}
+[data-accent="black"] {
+  --color-primary: oklch(25% 0 0);
+  --color-primary-content: oklch(98% 0 0);
+}
+
 /* Add variants based on LiveView classes */
 @custom-variant phx-click-loading (.phx-click-loading&, .phx-click-loading &);
 @custom-variant phx-submit-loading (.phx-submit-loading&, .phx-submit-loading &);
@@ -140,4 +183,27 @@
 
 .prose > :last-child {
   margin-bottom: 0;
+}
+
+/* RAG citation buttons */
+.rag-cite {
+  display: inline;
+  padding: 0 0.2rem;
+  font-size: 0.7em;
+  font-weight: 600;
+  color: var(--color-primary);
+  background: color-mix(in oklch, var(--color-primary) 10%, transparent);
+  border: 1px solid color-mix(in oklch, var(--color-primary) 20%, transparent);
+  border-radius: 0.25rem;
+  cursor: pointer;
+  vertical-align: super;
+}
+.rag-cite:hover {
+  background: color-mix(in oklch, var(--color-primary) 20%, transparent);
+}
+
+/* Sidebar source highlight on citation hover */
+.source-item-highlight {
+  border-color: var(--color-primary) !important;
+  background: color-mix(in oklch, var(--color-primary) 8%, transparent);
 }

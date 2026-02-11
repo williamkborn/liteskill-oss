@@ -626,4 +626,36 @@ defmodule Liteskill.ChatTest do
       assert message.content == "Hello from group member!"
     end
   end
+
+  describe "update_message_rag_sources/2" do
+    test "persists rag_sources on a message", %{user: user} do
+      {:ok, conv} = Chat.create_conversation(%{user_id: user.id})
+      {:ok, _msg} = Chat.send_message(conv.id, user.id, "test")
+      Process.sleep(100)
+
+      {:ok, messages} = Chat.list_messages(conv.id, user.id)
+      message = hd(messages)
+
+      rag_sources = [
+        %{
+          "chunk_id" => Ecto.UUID.generate(),
+          "document_id" => Ecto.UUID.generate(),
+          "document_title" => "Wiki Page",
+          "source_name" => "wiki",
+          "content" => "some content",
+          "position" => 0,
+          "relevance_score" => 0.95,
+          "source_uri" => "/wiki/abc-123"
+        }
+      ]
+
+      assert {:ok, updated} = Chat.update_message_rag_sources(message.id, rag_sources)
+      assert updated.rag_sources == rag_sources
+    end
+
+    test "returns error for non-existent message" do
+      assert {:error, :not_found} =
+               Chat.update_message_rag_sources(Ecto.UUID.generate(), [])
+    end
+  end
 end

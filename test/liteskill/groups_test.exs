@@ -187,4 +187,94 @@ defmodule Liteskill.GroupsTest do
       assert {:error, :not_found} = Groups.delete_group(Ecto.UUID.generate(), creator.id)
     end
   end
+
+  describe "list_all_groups/0" do
+    test "lists all groups with preloaded associations", %{creator: creator, member: member} do
+      {:ok, group} = Groups.create_group("All Groups Test", creator.id)
+      {:ok, _} = Groups.add_member(group.id, creator.id, member.id)
+
+      results = Groups.list_all_groups()
+      entry = Enum.find(results, fn g -> g.id == group.id end)
+
+      assert entry != nil
+      assert entry.name == "All Groups Test"
+      assert length(entry.memberships) == 2
+      assert entry.creator.id == creator.id
+    end
+
+    test "returns empty list when no groups exist" do
+      # Delete all groups first
+      Repo.delete_all(Liteskill.Groups.GroupMembership)
+      Repo.delete_all(Liteskill.Groups.Group)
+
+      assert Groups.list_all_groups() == []
+    end
+  end
+
+  describe "admin_get_group/1" do
+    test "returns group without membership check", %{creator: creator} do
+      {:ok, group} = Groups.create_group("Admin Get", creator.id)
+
+      assert {:ok, found} = Groups.admin_get_group(group.id)
+      assert found.id == group.id
+    end
+
+    test "returns not_found for nonexistent group" do
+      assert {:error, :not_found} = Groups.admin_get_group(Ecto.UUID.generate())
+    end
+  end
+
+  describe "admin_list_members/1" do
+    test "lists members with preloaded user", %{creator: creator, member: member} do
+      {:ok, group} = Groups.create_group("Admin Members", creator.id)
+      {:ok, _} = Groups.add_member(group.id, creator.id, member.id)
+
+      members = Groups.admin_list_members(group.id)
+      assert length(members) == 2
+      assert Enum.all?(members, fn m -> m.user != nil end)
+
+      user_ids = Enum.map(members, & &1.user_id)
+      assert creator.id in user_ids
+      assert member.id in user_ids
+    end
+  end
+
+  describe "admin_add_member/3" do
+    test "adds member without creator check", %{creator: creator, outsider: outsider} do
+      {:ok, group} = Groups.create_group("Admin Add", creator.id)
+
+      assert {:ok, membership} = Groups.admin_add_member(group.id, outsider.id, "member")
+      assert membership.user_id == outsider.id
+      assert membership.role == "member"
+    end
+  end
+
+  describe "admin_remove_member/2" do
+    test "removes member without creator check", %{creator: creator, member: member} do
+      {:ok, group} = Groups.create_group("Admin Remove", creator.id)
+      {:ok, _} = Groups.add_member(group.id, creator.id, member.id)
+
+      assert {:ok, _} = Groups.admin_remove_member(group.id, member.id)
+      assert Groups.list_groups(member.id) == []
+    end
+
+    test "returns not_found for non-member", %{creator: creator, outsider: outsider} do
+      {:ok, group} = Groups.create_group("Admin Remove NF", creator.id)
+
+      assert {:error, :not_found} = Groups.admin_remove_member(group.id, outsider.id)
+    end
+  end
+
+  describe "admin_delete_group/1" do
+    test "deletes group without creator check", %{creator: creator} do
+      {:ok, group} = Groups.create_group("Admin Delete", creator.id)
+
+      assert {:ok, _} = Groups.admin_delete_group(group.id)
+      assert Groups.list_groups(creator.id) == []
+    end
+
+    test "returns not_found for nonexistent group" do
+      assert {:error, :not_found} = Groups.admin_delete_group(Ecto.UUID.generate())
+    end
+  end
 end

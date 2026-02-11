@@ -489,6 +489,210 @@ defmodule Liteskill.Chat.ProjectorTest do
     assert message.total_tokens == nil
   end
 
+  test "filter_cited_sources: keeps only cited sources from rag_sources", %{user: user} do
+    {stream_id, _conv_id} = create_conversation(user)
+    message_id = Ecto.UUID.generate()
+
+    doc_id_cited = Ecto.UUID.generate()
+    doc_id_uncited = Ecto.UUID.generate()
+
+    rag_sources = [
+      %{"document_id" => doc_id_cited, "content" => "cited"},
+      %{"document_id" => doc_id_uncited, "content" => "not cited"}
+    ]
+
+    # Start stream
+    {:ok, events} =
+      Store.append_events(stream_id, 1, [
+        %{
+          event_type: "AssistantStreamStarted",
+          data: %{
+            "message_id" => message_id,
+            "model_id" => "claude",
+            "request_id" => Ecto.UUID.generate(),
+            "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
+          }
+        }
+      ])
+
+    Projector.project_events(stream_id, events)
+    Process.sleep(100)
+
+    # Set rag_sources on the message
+    message = Repo.get!(Message, message_id)
+    message |> Message.changeset(%{rag_sources: rag_sources}) |> Repo.update!()
+
+    # Complete with content that cites one source
+    {:ok, events} =
+      Store.append_events(stream_id, 2, [
+        %{
+          event_type: "AssistantStreamCompleted",
+          data: %{
+            "message_id" => message_id,
+            "full_content" => "Here is info [uuid:#{doc_id_cited}].",
+            "stop_reason" => "end_turn",
+            "input_tokens" => 10,
+            "output_tokens" => 5,
+            "latency_ms" => 100,
+            "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
+          }
+        }
+      ])
+
+    Projector.project_events(stream_id, events)
+    Process.sleep(100)
+
+    message = Repo.get!(Message, message_id)
+    assert length(message.rag_sources) == 1
+    assert hd(message.rag_sources)["document_id"] == doc_id_cited
+  end
+
+  test "filter_cited_sources: returns nil when no sources are cited", %{user: user} do
+    {stream_id, _conv_id} = create_conversation(user)
+    message_id = Ecto.UUID.generate()
+
+    rag_sources = [
+      %{"document_id" => Ecto.UUID.generate(), "content" => "not cited"}
+    ]
+
+    {:ok, events} =
+      Store.append_events(stream_id, 1, [
+        %{
+          event_type: "AssistantStreamStarted",
+          data: %{
+            "message_id" => message_id,
+            "model_id" => "claude",
+            "request_id" => Ecto.UUID.generate(),
+            "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
+          }
+        }
+      ])
+
+    Projector.project_events(stream_id, events)
+    Process.sleep(100)
+
+    message = Repo.get!(Message, message_id)
+    message |> Message.changeset(%{rag_sources: rag_sources}) |> Repo.update!()
+
+    {:ok, events} =
+      Store.append_events(stream_id, 2, [
+        %{
+          event_type: "AssistantStreamCompleted",
+          data: %{
+            "message_id" => message_id,
+            "full_content" => "No citations here.",
+            "stop_reason" => "end_turn",
+            "input_tokens" => 10,
+            "output_tokens" => 5,
+            "latency_ms" => 100,
+            "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
+          }
+        }
+      ])
+
+    Projector.project_events(stream_id, events)
+    Process.sleep(100)
+
+    message = Repo.get!(Message, message_id)
+    assert message.rag_sources == nil
+  end
+
+  test "filter_cited_sources: preserves empty list when rag_sources is []", %{user: user} do
+    {stream_id, _conv_id} = create_conversation(user)
+    message_id = Ecto.UUID.generate()
+
+    {:ok, events} =
+      Store.append_events(stream_id, 1, [
+        %{
+          event_type: "AssistantStreamStarted",
+          data: %{
+            "message_id" => message_id,
+            "model_id" => "claude",
+            "request_id" => Ecto.UUID.generate(),
+            "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
+          }
+        }
+      ])
+
+    Projector.project_events(stream_id, events)
+    Process.sleep(100)
+
+    message = Repo.get!(Message, message_id)
+    message |> Message.changeset(%{rag_sources: []}) |> Repo.update!()
+
+    {:ok, events} =
+      Store.append_events(stream_id, 2, [
+        %{
+          event_type: "AssistantStreamCompleted",
+          data: %{
+            "message_id" => message_id,
+            "full_content" => "Hello.",
+            "stop_reason" => "end_turn",
+            "input_tokens" => 10,
+            "output_tokens" => 5,
+            "latency_ms" => 100,
+            "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
+          }
+        }
+      ])
+
+    Projector.project_events(stream_id, events)
+    Process.sleep(100)
+
+    message = Repo.get!(Message, message_id)
+    assert message.rag_sources == []
+  end
+
+  test "filter_cited_sources: returns nil when content is nil but sources exist", %{user: user} do
+    {stream_id, _conv_id} = create_conversation(user)
+    message_id = Ecto.UUID.generate()
+
+    rag_sources = [
+      %{"document_id" => Ecto.UUID.generate(), "content" => "some source"}
+    ]
+
+    {:ok, events} =
+      Store.append_events(stream_id, 1, [
+        %{
+          event_type: "AssistantStreamStarted",
+          data: %{
+            "message_id" => message_id,
+            "model_id" => "claude",
+            "request_id" => Ecto.UUID.generate(),
+            "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
+          }
+        }
+      ])
+
+    Projector.project_events(stream_id, events)
+    Process.sleep(100)
+
+    message = Repo.get!(Message, message_id)
+    message |> Message.changeset(%{rag_sources: rag_sources}) |> Repo.update!()
+
+    {:ok, events} =
+      Store.append_events(stream_id, 2, [
+        %{
+          event_type: "AssistantStreamCompleted",
+          data: %{
+            "message_id" => message_id,
+            "full_content" => nil,
+            "stop_reason" => "end_turn",
+            "input_tokens" => 10,
+            "output_tokens" => 5,
+            "latency_ms" => 100,
+            "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
+          }
+        }
+      ])
+
+    Projector.project_events(stream_id, events)
+    Process.sleep(100)
+
+    message = Repo.get!(Message, message_id)
+    assert message.rag_sources == nil
+  end
+
   defp create_conversation(user) do
     conversation_id = Ecto.UUID.generate()
     stream_id = "conversation-#{conversation_id}"

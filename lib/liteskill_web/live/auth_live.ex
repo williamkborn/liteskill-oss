@@ -43,10 +43,11 @@ defmodule LiteskillWeb.AuthLive do
                 <span class="label-text">Email</span>
               </label>
               <input
-                type="email"
+                type={if @live_action == :register, do: "email", else: "text"}
                 name="user[email]"
                 id="user_email"
                 value={@form[:email].value}
+                placeholder="Email"
                 class="input input-bordered w-full"
                 required
               />
@@ -125,7 +126,9 @@ defmodule LiteskillWeb.AuthLive do
   end
 
   defp handle_login(params, socket) do
-    case Accounts.authenticate_by_email_password(params["email"], params["password"]) do
+    email = expand_admin_shorthand(params["email"])
+
+    case Accounts.authenticate_by_email_password(email, params["password"]) do
       {:ok, user} ->
         token = Phoenix.Token.sign(LiteskillWeb.Endpoint, "user_session", user.id)
         {:noreply, redirect(socket, to: "/auth/session?token=#{token}")}
@@ -134,6 +137,9 @@ defmodule LiteskillWeb.AuthLive do
         {:noreply, assign(socket, error: "Invalid email or password")}
     end
   end
+
+  defp expand_admin_shorthand("admin"), do: Liteskill.Accounts.User.admin_email()
+  defp expand_admin_shorthand(email), do: email
 
   defp format_changeset_error(changeset) do
     Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->

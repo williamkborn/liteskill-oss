@@ -19,6 +19,8 @@ defmodule LiteskillWeb.Markdown do
     ]
   ]
 
+  @uuid_re ~r/\[uuid:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\]/
+
   @doc """
   Renders a complete markdown string to an HTML-safe Phoenix.HTML struct.
   """
@@ -26,7 +28,7 @@ defmodule LiteskillWeb.Markdown do
   def render(""), do: {:safe, ""}
 
   def render(markdown) when is_binary(markdown) do
-    {:safe, MDEx.to_html!(markdown, @mdex_opts)}
+    {:safe, markdown |> MDEx.to_html!(@mdex_opts) |> replace_citations()}
   end
 
   @doc """
@@ -41,6 +43,19 @@ defmodule LiteskillWeb.Markdown do
       MDEx.new(Keyword.merge(@mdex_opts, streaming: true, markdown: markdown))
       |> MDEx.to_html!()
 
-    {:safe, html}
+    {:safe, replace_citations(html)}
+  end
+
+  defp replace_citations(html) do
+    {result, _n} =
+      Regex.scan(@uuid_re, html)
+      |> Enum.reduce({html, 1}, fn [full_match, uuid], {acc, n} ->
+        replacement =
+          ~s(<button class="rag-cite" phx-click="show_source" phx-value-doc-id="#{uuid}">#{n}</button>)
+
+        {String.replace(acc, full_match, replacement, global: false), n + 1}
+      end)
+
+    result
   end
 end
