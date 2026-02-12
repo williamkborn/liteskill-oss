@@ -160,6 +160,109 @@ Liteskill exposes a JSON API under `/api` for programmatic access. All endpoints
 | `POST`   | `/api/groups/:id/members`                 | Add a member                |
 | `DELETE` | `/api/groups/:id/members/:user_id`        | Remove a member             |
 
+## Running with Docker
+
+The quickest way to run Liteskill locally. You need [Docker](https://docs.docker.com/get-docker/) with the Compose plugin.
+
+### Quick start (Docker Compose)
+
+**1. Generate secrets**
+
+Liteskill requires two secret keys. Generate them once and export them so Compose can pick them up:
+
+```bash
+export SECRET_KEY_BASE=$(openssl rand -base64 64 | tr -d '\n')
+export ENCRYPTION_KEY=$(openssl rand -base64 32 | tr -d '\n')
+```
+
+Save these somewhere safe — you'll need the same values every time you start the stack.
+
+**2. Start the database**
+
+```bash
+docker compose up -d db
+```
+
+Wait a few seconds for PostgreSQL to become healthy (Compose will health-check it automatically).
+
+**3. Run migrations**
+
+```bash
+docker compose run --rm migrate
+```
+
+This creates the database schema and all tables, including the pgvector extension needed for RAG.
+
+**4. Start the application**
+
+```bash
+docker compose up app
+```
+
+Visit [localhost:4000](http://localhost:4000). Register an account to get started — the first user is automatically made an admin.
+
+**5. Stop everything**
+
+```bash
+docker compose down        # stop containers, keep data
+docker compose down -v     # stop containers AND delete database volume
+```
+
+### Connecting to AI
+
+To enable chat with an LLM, pass your AWS Bedrock credentials as environment variables. You can either export them alongside the secrets above, or add them to a `.env` file in the project root:
+
+```bash
+# .env
+SECRET_KEY_BASE=<your-secret-key-base>
+ENCRYPTION_KEY=<your-encryption-key>
+AWS_BEARER_TOKEN_BEDROCK=<your-bedrock-token>
+AWS_REGION=us-east-1
+```
+
+Compose reads `.env` automatically — no changes to `docker-compose.yml` needed.
+
+### Running without Compose
+
+If you prefer plain `docker run` or already have a PostgreSQL instance with pgvector:
+
+```bash
+# Build the image
+docker build -t liteskill .
+
+# Run migrations against your database
+docker run --rm \
+  -e DATABASE_URL="ecto://user:pass@host/liteskill" \
+  liteskill bin/migrate
+
+# Start the server
+docker run -d \
+  -p 4000:4000 \
+  -e DATABASE_URL="ecto://user:pass@host/liteskill" \
+  -e SECRET_KEY_BASE="$(openssl rand -base64 64 | tr -d '\n')" \
+  -e ENCRYPTION_KEY="$(openssl rand -base64 32 | tr -d '\n')" \
+  -e PHX_HOST="localhost" \
+  liteskill
+```
+
+If your PostgreSQL is on the host machine, add `--network host` instead of `-p 4000:4000` and use `localhost` in `DATABASE_URL`.
+
+### Environment variable reference
+
+All configuration is loaded at startup from environment variables. See the [Configuration](#configuration) section above for the full list. The database **must** have the [pgvector](https://github.com/pgvector/pgvector) extension available — the `pgvector/pgvector:pg16` image used in `docker-compose.yml` includes it.
+
+### Image tags
+
+CI automatically builds and pushes images to Docker Hub on every push to `main` and on version tags:
+
+| Event | Tags | Push? |
+|-------|------|-------|
+| Push to `main` | `main`, `sha-<hash>` | Yes |
+| Tag `v1.2.3` | `1.2.3`, `1.2`, `latest`, `sha-<hash>` | Yes |
+| Pull request | `pr-<number>` | No (build only) |
+
+To pull a published image instead of building locally, replace `build: .` with `image: liteskill/liteskill:latest` in `docker-compose.yml`.
+
 ## Deployment
 
 Build a release:
@@ -180,7 +283,7 @@ PHX_SERVER=true \
 _build/prod/rel/liteskill/bin/liteskill start
 ```
 
-See the [Phoenix deployment guides](https://hexdocs.pm/phoenix/deployment.html) for more options including Docker and fly.io.
+See the [Phoenix deployment guides](https://hexdocs.pm/phoenix/deployment.html) for more options.
 
 ## License
 
