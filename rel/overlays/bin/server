@@ -3,4 +3,7 @@ set -eu
 
 cd -P -- "$(dirname -- "$0")/.."
 
+# Run pending migrations before starting the server
+./bin/liteskill eval "Liteskill.Release.migrate()"
+
 PHX_SERVER=true exec ./bin/liteskill start

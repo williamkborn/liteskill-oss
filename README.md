@@ -50,13 +50,15 @@ Visit [localhost:4000](http://localhost:4000) in your browser.
 
 All runtime configuration is loaded from environment variables. Set them before starting the server or add them to a `.env` file.
 
-### Required (production)
+### Required
 
-| Variable          | Description                          |
-|-------------------|--------------------------------------|
-| `DATABASE_URL`    | PostgreSQL connection string         |
-| `SECRET_KEY_BASE` | Phoenix signing/encryption key       |
-| `ENCRYPTION_KEY`  | Encryption key for secrets at rest   |
+| Variable                   | Description                          |
+|----------------------------|--------------------------------------|
+| `DATABASE_URL`             | PostgreSQL connection string         |
+| `SECRET_KEY_BASE`          | Phoenix signing/encryption key       |
+| `ENCRYPTION_KEY`           | Encryption key for secrets at rest   |
+| `AWS_BEARER_TOKEN_BEDROCK` | AWS Bedrock bearer token for LLM access |
+| `AWS_REGION`               | AWS region for Bedrock (e.g. `us-east-1`) |
 
 ### Optional
 
@@ -65,8 +67,6 @@ All runtime configuration is loaded from environment variables. Set them before 
 | `PORT`                    | HTTP port                                | `4000`                                                  |
 | `PHX_HOST`                | Public hostname                          | `example.com`                                           |
 | `PHX_SERVER`              | Set to `true` to start the HTTP server   | --                                                      |
-| `AWS_BEARER_TOKEN_BEDROCK`| AWS Bedrock bearer token                 | --                                                      |
-| `AWS_REGION`              | AWS region for Bedrock                   | `us-east-1`                                             |
 | `OIDC_ISSUER`             | OpenID Connect issuer URL                | --                                                      |
 | `OIDC_CLIENT_ID`          | OIDC client ID                           | --                                                      |
 | `OIDC_CLIENT_SECRET`      | OIDC client secret                       | --                                                      |
@@ -166,61 +166,37 @@ The quickest way to run Liteskill locally. You need [Docker](https://docs.docker
 
 ### Quick start (Docker Compose)
 
-**1. Generate secrets**
+**1. Create a `.env` file**
 
-Liteskill requires two secret keys. Generate them once and export them so Compose can pick them up:
-
-```bash
-export SECRET_KEY_BASE=$(openssl rand -base64 64 | tr -d '\n')
-export ENCRYPTION_KEY=$(openssl rand -base64 32 | tr -d '\n')
-```
-
-Save these somewhere safe — you'll need the same values every time you start the stack.
-
-**2. Start the database**
+Liteskill requires secret keys and AWS Bedrock credentials. Generate the secrets and add your AWS config:
 
 ```bash
-docker compose up -d db
+cat <<EOF > .env
+SECRET_KEY_BASE=$(openssl rand -base64 64 | tr -d '\n')
+ENCRYPTION_KEY=$(openssl rand -base64 32 | tr -d '\n')
+AWS_BEARER_TOKEN_BEDROCK=<your-bedrock-token>
+AWS_REGION=us-east-1
+EOF
 ```
 
-Wait a few seconds for PostgreSQL to become healthy (Compose will health-check it automatically).
+Replace `<your-bedrock-token>` with your actual AWS Bedrock bearer token. Compose reads `.env` automatically.
 
-**3. Run migrations**
+**2. Start the application**
 
 ```bash
-docker compose run --rm migrate
+docker compose up
 ```
 
-This creates the database schema and all tables, including the pgvector extension needed for RAG.
+This starts PostgreSQL, waits for it to be healthy, runs database migrations, and starts the server. Visit [localhost:4000](http://localhost:4000) once the logs show the server is running. Register an account to get started — the first user is automatically made an admin.
 
-**4. Start the application**
-
-```bash
-docker compose up app
-```
-
-Visit [localhost:4000](http://localhost:4000). Register an account to get started — the first user is automatically made an admin.
-
-**5. Stop everything**
+**3. Stop everything**
 
 ```bash
 docker compose down        # stop containers, keep data
 docker compose down -v     # stop containers AND delete database volume
 ```
 
-### Connecting to AI
-
-To enable chat with an LLM, pass your AWS Bedrock credentials as environment variables. You can either export them alongside the secrets above, or add them to a `.env` file in the project root:
-
-```bash
-# .env
-SECRET_KEY_BASE=<your-secret-key-base>
-ENCRYPTION_KEY=<your-encryption-key>
-AWS_BEARER_TOKEN_BEDROCK=<your-bedrock-token>
-AWS_REGION=us-east-1
-```
-
-Compose reads `.env` automatically — no changes to `docker-compose.yml` needed.
+If any required environment variables are missing, Compose will exit with a descriptive error message telling you what to set.
 
 ### Running without Compose
 
@@ -230,17 +206,14 @@ If you prefer plain `docker run` or already have a PostgreSQL instance with pgve
 # Build the image
 docker build -t liteskill .
 
-# Run migrations against your database
-docker run --rm \
-  -e DATABASE_URL="ecto://user:pass@host/liteskill" \
-  liteskill bin/migrate
-
-# Start the server
+# Start the server (runs migrations automatically on startup)
 docker run -d \
   -p 4000:4000 \
   -e DATABASE_URL="ecto://user:pass@host/liteskill" \
   -e SECRET_KEY_BASE="$(openssl rand -base64 64 | tr -d '\n')" \
   -e ENCRYPTION_KEY="$(openssl rand -base64 32 | tr -d '\n')" \
+  -e AWS_BEARER_TOKEN_BEDROCK="<your-bedrock-token>" \
+  -e AWS_REGION="us-east-1" \
   -e PHX_HOST="localhost" \
   liteskill
 ```
@@ -278,6 +251,8 @@ Run it:
 DATABASE_URL="ecto://..." \
 SECRET_KEY_BASE="$(mix phx.gen.secret)" \
 ENCRYPTION_KEY="$(mix phx.gen.secret)" \
+AWS_BEARER_TOKEN_BEDROCK="<your-bedrock-token>" \
+AWS_REGION="us-east-1" \
 PHX_HOST="your-domain.com" \
 PHX_SERVER=true \
 _build/prod/rel/liteskill/bin/liteskill start
