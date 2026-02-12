@@ -165,6 +165,27 @@ defmodule Liteskill.Chat do
     end
   end
 
+  def truncate_conversation(conversation_id, user_id, message_id) do
+    with {:ok, conversation} <- authorize_conversation(conversation_id, user_id) do
+      command = {:truncate_conversation, %{message_id: message_id}}
+
+      case Loader.execute(ConversationAggregate, conversation.stream_id, command) do
+        {:ok, _state, events} ->
+          Projector.project_events(conversation.stream_id, events)
+          {:ok, Repo.get!(Conversation, conversation_id)}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end
+  end
+
+  def edit_message(conversation_id, user_id, message_id, new_content, opts \\ []) do
+    with {:ok, _conversation} <- truncate_conversation(conversation_id, user_id, message_id) do
+      send_message(conversation_id, user_id, new_content, opts)
+    end
+  end
+
   # --- ACL Management ---
 
   def grant_conversation_access(conversation_id, grantor_id, grantee_user_id, role \\ "member") do
@@ -231,30 +252,27 @@ defmodule Liteskill.Chat do
     limit = Keyword.get(opts, :limit, 20)
     offset = Keyword.get(opts, :offset, 0)
 
-    direct_acl_subquery =
-      from a in ConversationAcl,
-        where: a.user_id == ^user_id,
-        select: a.conversation_id
-
-    group_acl_subquery =
-      from a in ConversationAcl,
-        join: gm in GroupMembership,
-        on: gm.group_id == a.group_id and gm.user_id == ^user_id,
-        where: not is_nil(a.group_id),
-        select: a.conversation_id
-
-    Conversation
-    |> where(
-      [c],
-      c.user_id == ^user_id or
-        c.id in subquery(direct_acl_subquery) or
-        c.id in subquery(group_acl_subquery)
-    )
-    |> where([c], c.status != "archived")
+    user_id
+    |> accessible_conversations_query(opts)
     |> order_by([c], desc: c.updated_at)
     |> limit(^limit)
     |> offset(^offset)
     |> Repo.all()
+  end
+
+  def count_conversations(user_id, opts \\ []) do
+    user_id
+    |> accessible_conversations_query(opts)
+    |> Repo.aggregate(:count)
+  end
+
+  def bulk_archive_conversations([], _user_id), do: {:ok, 0}
+
+  def bulk_archive_conversations(conversation_ids, user_id) do
+    archived =
+      Enum.count(conversation_ids, &match?({:ok, _}, archive_conversation(&1, user_id)))
+
+    {:ok, archived}
   end
 
   def get_conversation(id, user_id) do
@@ -430,6 +448,7 @@ defmodule Liteskill.Chat do
         {:ok, _state, events} ->
           Projector.project_events(conversation.stream_id, events)
 
+        # coveralls-ignore-next-line
         {:error, _reason} ->
           :ok
       end
@@ -465,6 +484,39 @@ defmodule Liteskill.Chat do
         else
           {:error, :forbidden}
         end
+    end
+  end
+
+  defp accessible_conversations_query(user_id, opts) do
+    search = Keyword.get(opts, :search)
+
+    direct_acl_subquery =
+      from a in ConversationAcl,
+        where: a.user_id == ^user_id,
+        select: a.conversation_id
+
+    group_acl_subquery =
+      from a in ConversationAcl,
+        join: gm in GroupMembership,
+        on: gm.group_id == a.group_id and gm.user_id == ^user_id,
+        where: not is_nil(a.group_id),
+        select: a.conversation_id
+
+    query =
+      Conversation
+      |> where(
+        [c],
+        c.user_id == ^user_id or
+          c.id in subquery(direct_acl_subquery) or
+          c.id in subquery(group_acl_subquery)
+      )
+      |> where([c], c.status != "archived")
+
+    if search && search != "" do
+      term = "%#{String.replace(search, "%", "\\%")}%"
+      where(query, [c], ilike(c.title, ^term))
+    else
+      query
     end
   end
 

@@ -165,5 +165,50 @@ defmodule Liteskill.Aggregate.LoaderTest do
     end
   end
 
+  describe "snapshot with nested data and atom fields" do
+    defmodule StatefulAggregate do
+      @behaviour Liteskill.Aggregate
+      defstruct status: :created, items: [], metadata: %{}
+
+      @impl true
+      def init, do: %__MODULE__{}
+
+      @impl true
+      def apply_event(state, %{event_type: "ItemAdded", data: %{"item" => item}}) do
+        %{state | status: :active, items: state.items ++ [item]}
+      end
+
+      def apply_event(state, %{event_type: "MetadataSet", data: %{"metadata" => meta}}) do
+        %{state | metadata: meta}
+      end
+
+      @impl true
+      def handle_command(_state, {:add_item, %{item: item}}) do
+        {:ok, [%{event_type: "ItemAdded", data: %{"item" => item}}]}
+      end
+
+      def handle_command(_state, {:set_metadata, %{metadata: meta}}) do
+        {:ok, [%{event_type: "MetadataSet", data: %{"metadata" => meta}}]}
+      end
+    end
+
+    test "restores atom status and nested data from snapshot" do
+      stream = stream_id()
+
+      # Save a snapshot with stringified keys, nested map, list values, and atom status as string
+      Store.save_snapshot(stream, 5, "StatefulAggregate", %{
+        "status" => "active",
+        "items" => ["one", "two"],
+        "metadata" => %{"key" => "value", "nested" => %{"deep" => true}}
+      })
+
+      {state, version} = Loader.load(StatefulAggregate, stream)
+      assert version == 5
+      assert state.status == :active
+      assert state.items == ["one", "two"]
+      assert state.metadata == %{key: "value", nested: %{deep: true}}
+    end
+  end
+
   defp stream_id, do: "test-counter-#{System.unique_integer([:positive])}"
 end

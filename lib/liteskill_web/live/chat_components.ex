@@ -8,34 +8,89 @@ defmodule LiteskillWeb.ChatComponents do
   import LiteskillWeb.CoreComponents, only: [icon: 1]
 
   attr :message, :map, required: true
+  attr :can_edit, :boolean, default: false
+  attr :editing, :boolean, default: false
+  attr :editing_content, :string, default: ""
+  attr :available_tools, :list, default: []
+  attr :edit_selected_server_ids, :any, default: nil
+  attr :edit_show_tool_picker, :boolean, default: false
+  attr :edit_auto_confirm, :boolean, default: true
 
   def message_bubble(assigns) do
-    assigns = assign(assigns, :tool_servers, tool_servers_from_message(assigns.message))
+    assigns =
+      assigns
+      |> assign(:tool_servers, tool_servers_from_message(assigns.message))
+      |> assign_new(:edit_selected_server_ids, fn -> MapSet.new() end)
 
     ~H"""
-    <%= if @message.role == "user" do %>
+    <%= if @editing do %>
       <div class="flex w-full mb-4 justify-end">
-        <div class="max-w-[75%]">
-          <div class="rounded-2xl rounded-br-sm px-4 py-3 bg-primary text-primary-content">
-            <p class="whitespace-pre-wrap break-words text-sm">{@message.content}</p>
-          </div>
-          <div :if={@tool_servers != []} class="flex flex-wrap gap-1 justify-end mt-1">
-            <span
-              :for={server <- @tool_servers}
-              class="badge badge-xs badge-outline badge-primary gap-1 opacity-70"
-            >
-              <.icon name="hero-wrench-screwdriver-micro" class="size-2.5" />
-              {server["name"]}
-            </span>
-          </div>
+        <div class="max-w-[85%] w-full">
+          <form phx-submit="confirm_edit" phx-change="edit_form_changed" class="space-y-2">
+            <textarea
+              name="content"
+              rows="4"
+              class="textarea textarea-bordered w-full text-sm"
+              phx-debounce="100"
+            >{@editing_content}</textarea>
+            <div class="flex items-center justify-between">
+              <LiteskillWeb.McpComponents.server_picker
+                available_tools={@available_tools}
+                selected_server_ids={@edit_selected_server_ids}
+                show={@edit_show_tool_picker}
+                auto_confirm={@edit_auto_confirm}
+                prefix="edit_"
+                direction="down"
+              />
+              <div class="flex gap-2">
+                <button
+                  type="button"
+                  phx-click="cancel_edit"
+                  class="btn btn-ghost btn-sm btn-circle"
+                  title="Cancel"
+                >
+                  <.icon name="hero-x-mark" class="size-5" />
+                </button>
+                <button type="submit" class="btn btn-primary btn-sm btn-circle" title="Confirm edit">
+                  <.icon name="hero-check" class="size-5" />
+                </button>
+              </div>
+            </div>
+          </form>
         </div>
       </div>
     <% else %>
-      <div class="mb-4 text-base-content">
-        <div id={"prose-#{@message.id}"} phx-hook="CopyCode" class="prose prose-sm max-w-none">
-          {LiteskillWeb.Markdown.render(@message.content)}
+      <%= if @message.role == "user" do %>
+        <div class="flex w-full mb-4 justify-end">
+          <div class="max-w-[75%]">
+            <div
+              class={[
+                "rounded-2xl rounded-br-sm px-4 py-3 bg-primary text-primary-content",
+                @can_edit && "cursor-pointer hover:brightness-90 transition-all"
+              ]}
+              phx-click={@can_edit && "edit_message"}
+              phx-value-message-id={@can_edit && @message.id}
+            >
+              <p class="whitespace-pre-wrap break-words text-sm">{@message.content}</p>
+            </div>
+            <div :if={@tool_servers != []} class="flex flex-wrap gap-1 justify-end mt-1">
+              <span
+                :for={server <- @tool_servers}
+                class="badge badge-xs badge-outline badge-primary gap-1 opacity-70"
+              >
+                <.icon name="hero-wrench-screwdriver-micro" class="size-2.5" />
+                {server["name"]}
+              </span>
+            </div>
+          </div>
         </div>
-      </div>
+      <% else %>
+        <div class="mb-4 text-base-content">
+          <div id={"prose-#{@message.id}"} phx-hook="CopyCode" class="prose prose-sm max-w-none">
+            {LiteskillWeb.Markdown.render(@message.content)}
+          </div>
+        </div>
+      <% end %>
     <% end %>
     """
   end

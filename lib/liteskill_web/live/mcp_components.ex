@@ -75,6 +75,8 @@ defmodule LiteskillWeb.McpComponents do
   attr :show, :boolean, required: true
   attr :auto_confirm, :boolean, required: true
   attr :tools_loading, :boolean, default: false
+  attr :prefix, :string, default: ""
+  attr :direction, :string, default: "up"
 
   def server_picker(assigns) do
     servers =
@@ -95,7 +97,7 @@ defmodule LiteskillWeb.McpComponents do
     <div class="relative">
       <button
         type="button"
-        phx-click="toggle_tool_picker"
+        phx-click={"#{@prefix}toggle_tool_picker"}
         class={[
           "btn btn-ghost btn-sm m-1 gap-1",
           if(@selected_count > 0, do: "text-primary", else: "text-base-content/50")
@@ -109,15 +111,18 @@ defmodule LiteskillWeb.McpComponents do
 
       <div
         :if={@show}
-        class="absolute bottom-full left-0 mb-2 w-72 bg-base-100 border border-base-300 rounded-xl shadow-lg z-50 max-h-96 overflow-y-auto"
-        phx-click-away="toggle_tool_picker"
+        class={[
+          "absolute left-0 w-72 bg-base-100 border border-base-300 rounded-xl shadow-lg z-50 max-h-96 overflow-y-auto",
+          if(@direction == "up", do: "bottom-full mb-2", else: "top-full mt-2")
+        ]}
+        phx-click-away={"#{@prefix}toggle_tool_picker"}
       >
         <div class="p-3 border-b border-base-300 flex items-center justify-between">
           <span class="text-sm font-semibold">MCP Servers</span>
           <button
             :if={@selected_count > 0}
             type="button"
-            phx-click="clear_tools"
+            phx-click={"#{@prefix}clear_tools"}
             class="btn btn-ghost btn-xs text-base-content/50"
           >
             Clear
@@ -135,7 +140,7 @@ defmodule LiteskillWeb.McpComponents do
           <p>No MCP servers found</p>
           <button
             type="button"
-            phx-click="refresh_tools"
+            phx-click={"#{@prefix}refresh_tools"}
             class="btn btn-ghost btn-xs mt-2 gap-1"
           >
             <.icon name="hero-arrow-path-micro" class="size-3" /> Retry
@@ -150,7 +155,7 @@ defmodule LiteskillWeb.McpComponents do
             <label class="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
               <input
                 type="checkbox"
-                phx-click="toggle_server"
+                phx-click={"#{@prefix}toggle_server"}
                 phx-value-server-id={server.id}
                 checked={MapSet.member?(@selected_server_ids, server.id)}
                 class="checkbox checkbox-sm checkbox-primary"
@@ -177,7 +182,7 @@ defmodule LiteskillWeb.McpComponents do
           <label class="flex items-center gap-2 cursor-pointer">
             <input
               type="checkbox"
-              phx-click="toggle_auto_confirm"
+              phx-click={"#{@prefix}toggle_auto_confirm"}
               checked={@auto_confirm}
               class="toggle toggle-xs toggle-primary"
             />
@@ -193,61 +198,337 @@ defmodule LiteskillWeb.McpComponents do
   attr :show_actions, :boolean, default: false
 
   def tool_call_display(assigns) do
+    {server_name, tool_name} = split_tool_name(assigns.tool_call.tool_name)
+    assigns = assign(assigns, server_name: server_name, display_tool_name: tool_name)
+
     ~H"""
-    <div class="flex justify-start mb-3">
-      <div class="max-w-[85%] bg-base-200/50 border border-base-300 rounded-lg px-3 py-2 text-xs">
-        <div class="flex items-center gap-2">
-          <.icon name="hero-wrench-screwdriver-micro" class="size-3.5 text-base-content/50" />
-          <span class="font-medium">{@tool_call.tool_name}</span>
-          <span class={[
-            "badge badge-xs",
-            case @tool_call.status do
-              "started" -> "badge-warning"
-              "completed" -> "badge-success"
-              _ -> "badge-ghost"
-            end
-          ]}>
-            {@tool_call.status}
-          </span>
+    <div class="flex items-center justify-start mb-2 gap-2">
+      <div
+        class="inline-flex items-center gap-2 bg-base-200/50 border border-base-300 rounded-lg px-3 py-1.5 text-xs cursor-pointer hover:bg-base-200 transition-colors"
+        phx-click="show_tool_call"
+        phx-value-tool-use-id={@tool_call.tool_use_id}
+      >
+        <.icon name="hero-wrench-screwdriver-micro" class="size-3.5 text-base-content/50 shrink-0" />
+        <span :if={@server_name != ""} class="text-base-content/70">{@server_name}</span>
+        <code class="bg-base-300/60 px-1 py-0.5 rounded text-[0.7rem]">{@display_tool_name}</code>
+        <span class={[
+          "badge badge-xs",
+          case @tool_call.status do
+            "started" -> "badge-warning"
+            "completed" -> "badge-success"
+            _ -> "badge-ghost"
+          end
+        ]}>
+          {@tool_call.status}
+        </span>
+      </div>
+      <div :if={@show_actions && @tool_call.status == "started"} class="flex gap-1 items-center">
+        <button
+          phx-click="approve_tool_call"
+          phx-value-tool-use-id={@tool_call.tool_use_id}
+          class="btn btn-success btn-xs gap-1"
+        >
+          <.icon name="hero-check-micro" class="size-3" /> Approve
+        </button>
+        <button
+          phx-click="reject_tool_call"
+          phx-value-tool-use-id={@tool_call.tool_use_id}
+          class="btn btn-error btn-xs gap-1"
+        >
+          <.icon name="hero-x-mark-micro" class="size-3" /> Reject
+        </button>
+      </div>
+    </div>
+    """
+  end
+
+  attr :tool_call, :map, default: nil
+
+  def tool_call_modal(assigns) do
+    {server_name, tool_name} =
+      if assigns.tool_call, do: split_tool_name(assigns.tool_call.tool_name), else: {"", ""}
+
+    {input_type, input_data} =
+      if assigns.tool_call, do: prepare_output(assigns.tool_call.input), else: {:text, ""}
+
+    {output_type, output_data} =
+      if assigns.tool_call, do: prepare_output(assigns.tool_call.output), else: {:text, ""}
+
+    assigns =
+      assign(assigns,
+        server_name: server_name,
+        display_tool_name: tool_name,
+        input_type: input_type,
+        input_data: input_data,
+        output_type: output_type,
+        output_data: output_data
+      )
+
+    ~H"""
+    <div
+      :if={@tool_call}
+      class="fixed inset-0 z-50 flex items-center justify-center"
+      phx-window-keydown="close_tool_call_modal"
+      phx-key="Escape"
+    >
+      <div class="fixed inset-0 bg-black/50" phx-click="close_tool_call_modal" />
+      <div class="relative bg-base-100 rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[85vh] overflow-y-auto z-10">
+        <div class="flex items-center justify-between p-4 border-b border-base-300">
+          <div class="flex items-center gap-2">
+            <.icon name="hero-wrench-screwdriver-micro" class="size-4 text-base-content/50" />
+            <span :if={@server_name != ""} class="text-sm text-base-content/70">{@server_name}</span>
+            <code class="bg-base-300/60 px-1.5 py-0.5 rounded text-sm">{@display_tool_name}</code>
+            <span class={[
+              "badge badge-sm",
+              case @tool_call.status do
+                "started" -> "badge-warning"
+                "completed" -> "badge-success"
+                _ -> "badge-ghost"
+              end
+            ]}>
+              {@tool_call.status}
+            </span>
+          </div>
+          <button phx-click="close_tool_call_modal" class="btn btn-ghost btn-sm btn-square">
+            <.icon name="hero-x-mark-micro" class="size-5" />
+          </button>
         </div>
-
-        <details :if={@tool_call.input && @tool_call.input != %{}} class="mt-1">
-          <summary class="cursor-pointer text-base-content/50 hover:text-base-content/70">
-            Input
-          </summary>
-          <pre class="mt-1 p-2 bg-base-300/50 rounded text-[0.65rem] overflow-x-auto whitespace-pre-wrap">{Jason.encode!(@tool_call.input, pretty: true)}</pre>
-        </details>
-
-        <details :if={@tool_call.output} class="mt-1">
-          <summary class="cursor-pointer text-base-content/50 hover:text-base-content/70">
-            Output
-          </summary>
-          <pre class="mt-1 p-2 bg-base-300/50 rounded text-[0.65rem] overflow-x-auto whitespace-pre-wrap">{Jason.encode!(@tool_call.output, pretty: true)}</pre>
-        </details>
-
-        <div :if={@show_actions && @tool_call.status == "started"} class="flex gap-2 mt-2">
-          <button
-            phx-click="approve_tool_call"
-            phx-value-tool-use-id={@tool_call.tool_use_id}
-            class="btn btn-success btn-xs gap-1"
-          >
-            <.icon name="hero-check-micro" class="size-3" /> Approve
-          </button>
-          <button
-            phx-click="reject_tool_call"
-            phx-value-tool-use-id={@tool_call.tool_use_id}
-            class="btn btn-error btn-xs gap-1"
-          >
-            <.icon name="hero-x-mark-micro" class="size-3" /> Reject
-          </button>
+        <div class="p-4 space-y-4">
+          <div :if={@tool_call.input && @tool_call.input != %{}}>
+            <div class="flex items-center gap-2 mb-2">
+              <h4 class="text-xs font-semibold text-base-content/50 uppercase tracking-wider">
+                Input
+              </h4>
+              <span class={[
+                "badge badge-xs",
+                case @input_type do
+                  :json -> "badge-info"
+                  :markdown -> "badge-secondary"
+                  :text -> "badge-ghost"
+                end
+              ]}>
+                {output_type_label(@input_type)}
+              </span>
+            </div>
+            <.json_viewer :if={@input_type == :json} data={@input_data} />
+            <div
+              :if={@input_type == :markdown}
+              class="p-3 bg-base-200 rounded-lg max-h-[50vh] overflow-y-auto prose prose-sm max-w-none"
+            >
+              {LiteskillWeb.Markdown.render(@input_data)}
+            </div>
+            <pre
+              :if={@input_type == :text}
+              class="p-3 bg-base-200 rounded-lg text-xs overflow-x-auto whitespace-pre-wrap max-h-[50vh]"
+            ><code>{@input_data}</code></pre>
+          </div>
+          <div :if={@tool_call.output}>
+            <div class="flex items-center gap-2 mb-2">
+              <h4 class="text-xs font-semibold text-base-content/50 uppercase tracking-wider">
+                Output
+              </h4>
+              <span class={[
+                "badge badge-xs",
+                case @output_type do
+                  :json -> "badge-info"
+                  :markdown -> "badge-secondary"
+                  :text -> "badge-ghost"
+                end
+              ]}>
+                {output_type_label(@output_type)}
+              </span>
+            </div>
+            <.json_viewer :if={@output_type == :json} data={@output_data} />
+            <div
+              :if={@output_type == :markdown}
+              class="p-3 bg-base-200 rounded-lg max-h-[50vh] overflow-y-auto prose prose-sm max-w-none"
+            >
+              {LiteskillWeb.Markdown.render(@output_data)}
+            </div>
+            <pre
+              :if={@output_type == :text}
+              class="p-3 bg-base-200 rounded-lg text-xs overflow-x-auto whitespace-pre-wrap max-h-[50vh]"
+            ><code>{@output_data}</code></pre>
+          </div>
         </div>
       </div>
     </div>
     """
   end
 
+  attr :data, :any, required: true
+
+  def json_viewer(assigns) do
+    ~H"""
+    <div data-json-viewer class="bg-base-200 rounded-lg max-h-[50vh] overflow-y-auto">
+      <div class="flex justify-end gap-1 px-3 pt-2 sticky top-0 bg-base-200 z-10">
+        <button
+          type="button"
+          class="btn btn-ghost btn-xs text-base-content/50"
+          onclick="this.closest('[data-json-viewer]').querySelectorAll('details').forEach(d => d.open = true)"
+        >
+          Expand all
+        </button>
+        <button
+          type="button"
+          class="btn btn-ghost btn-xs text-base-content/50"
+          onclick="this.closest('[data-json-viewer]').querySelectorAll('details').forEach(d => d.open = false)"
+        >
+          Collapse all
+        </button>
+      </div>
+      <div class="p-3 pt-1 overflow-x-auto">
+        <.json_tree data={@data} />
+      </div>
+    </div>
+    """
+  end
+
+  attr :data, :any, required: true
+  attr :depth, :integer, default: 0
+
+  def json_tree(%{data: data} = assigns) when is_map(data) do
+    assigns = assign(assigns, :entries, Enum.sort_by(data, &elem(&1, 0)))
+
+    ~H"""
+    <div class={if @depth > 0, do: "ml-4 border-l border-base-300/50 pl-2"}>
+      <div :for={{key, value} <- @entries} class="py-0.5 text-xs leading-relaxed">
+        <%= if is_map(value) or is_list(value) do %>
+          <details open={@depth < 1}>
+            <summary class="cursor-pointer select-none hover:bg-base-200/50 rounded px-1 -mx-1">
+              <span class="text-info font-medium">{key}</span><span class="text-base-content/40">: {type_hint(value)}</span>
+            </summary>
+            <.json_tree data={value} depth={@depth + 1} />
+          </details>
+        <% else %>
+          <div class="px-1">
+            <span class="text-info font-medium">{key}</span><span class="text-base-content/40">: </span>
+            <.json_value data={value} />
+          </div>
+        <% end %>
+      </div>
+    </div>
+    """
+  end
+
+  def json_tree(%{data: data} = assigns) when is_list(data) do
+    assigns = assign(assigns, :items, Enum.with_index(data))
+
+    ~H"""
+    <div class={if @depth > 0, do: "ml-4 border-l border-base-300/50 pl-2"}>
+      <div :for={{item, idx} <- @items} class="py-0.5 text-xs leading-relaxed">
+        <%= if is_map(item) or is_list(item) do %>
+          <details open={@depth < 1}>
+            <summary class="cursor-pointer select-none hover:bg-base-200/50 rounded px-1 -mx-1">
+              <span class="text-base-content/40">[{idx}]: {type_hint(item)}</span>
+            </summary>
+            <.json_tree data={item} depth={@depth + 1} />
+          </details>
+        <% else %>
+          <div class="px-1">
+            <span class="text-base-content/40">[{idx}]: </span> <.json_value data={item} />
+          </div>
+        <% end %>
+      </div>
+    </div>
+    """
+  end
+
+  def json_tree(assigns) do
+    ~H"<.json_value data={@data} />"
+  end
+
+  attr :data, :any, required: true
+
+  def json_value(%{data: data} = assigns) when is_binary(data) do
+    ~H"""
+    <span class="text-success break-all">"{@data}"</span>
+    """
+  end
+
+  def json_value(%{data: data} = assigns) when is_number(data) do
+    ~H[<span class="text-warning">{@data}</span>]
+  end
+
+  def json_value(%{data: true} = assigns) do
+    ~H[<span class="text-accent">true</span>]
+  end
+
+  def json_value(%{data: false} = assigns) do
+    ~H[<span class="text-accent">false</span>]
+  end
+
+  def json_value(%{data: nil} = assigns) do
+    ~H[<span class="text-base-content/40 italic">null</span>]
+  end
+
+  def json_value(assigns) do
+    ~H"<span>{inspect(@data)}</span>"
+  end
+
+  defp split_tool_name(name) do
+    case String.split(name, "__", parts: 2) do
+      [server, tool] ->
+        display_server =
+          server
+          |> String.replace("_", " ")
+          |> String.split(" ")
+          |> Enum.map_join(" ", &String.capitalize/1)
+
+        {display_server, tool}
+
+      [_tool] ->
+        {"", name}
+    end
+  end
+
+  defp prepare_output(nil), do: {:text, ""}
+
+  defp prepare_output(%{"content" => content}) when is_list(content) do
+    text =
+      Enum.map_join(content, "\n", fn
+        %{"text" => text} -> text
+        other -> Jason.encode!(other, pretty: true)
+      end)
+
+    detect_text_type(text)
+  end
+
+  defp prepare_output(output) when is_map(output), do: {:json, output}
+  defp prepare_output(output) when is_list(output), do: {:json, output}
+  defp prepare_output(output) when is_binary(output), do: detect_text_type(output)
+  defp prepare_output(output), do: {:text, inspect(output)}
+
+  defp detect_text_type(text) do
+    case Jason.decode(text) do
+      {:ok, decoded} when is_map(decoded) or is_list(decoded) ->
+        {:json, decoded}
+
+      _ ->
+        if markdown_text?(text), do: {:markdown, text}, else: {:text, text}
+    end
+  end
+
+  defp markdown_text?(text) do
+    String.contains?(text, "```") or
+      String.contains?(text, "**") or
+      Regex.match?(~r/^\#{1,6}\s/m, text) or
+      Regex.match?(~r/\[.+?\]\(.+?\)/, text) or
+      Regex.match?(~r/^\s*[-*+]\s/m, text) or
+      Regex.match?(~r/^\|.+\|$/m, text)
+  end
+
+  defp output_type_label(:json), do: "JSON"
+  defp output_type_label(:markdown), do: "Markdown"
+  defp output_type_label(:text), do: "Text"
+
+  defp type_hint(data) when is_map(data), do: "{#{map_size(data)}}"
+  defp type_hint(data) when is_list(data), do: "[#{length(data)}]"
+  defp type_hint(_), do: ""
+
   attr :available_tools, :list, required: true
   attr :selected_server_ids, :any, required: true
+  attr :prefix, :string, default: ""
 
   def selected_server_badges(assigns) do
     selected_servers =
@@ -269,7 +550,7 @@ defmodule LiteskillWeb.McpComponents do
         {server.name}
         <button
           type="button"
-          phx-click="toggle_server"
+          phx-click={"#{@prefix}toggle_server"}
           phx-value-server-id={server.id}
           class="hover:text-error"
         >

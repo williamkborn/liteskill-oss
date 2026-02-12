@@ -223,6 +223,33 @@ defmodule Liteskill.Chat.ConversationAggregate do
     {:ok, [event]}
   end
 
+  def handle_command(%{status: :created}, {:truncate_conversation, _}) do
+    {:error, :no_messages}
+  end
+
+  def handle_command(%{status: :archived}, {:truncate_conversation, _}) do
+    {:error, :conversation_archived}
+  end
+
+  def handle_command(%{status: status, messages: messages}, {:truncate_conversation, params})
+      when status in [:active, :streaming] do
+    message_id = params.message_id
+
+    if Enum.any?(messages, &(&1.id == message_id)) do
+      now = DateTime.utc_now() |> DateTime.to_iso8601()
+
+      event =
+        Events.serialize(%Events.ConversationTruncated{
+          message_id: message_id,
+          timestamp: now
+        })
+
+      {:ok, [event]}
+    else
+      {:error, :message_not_found}
+    end
+  end
+
   # --- Event Appliers ---
 
   @impl true
@@ -349,5 +376,16 @@ defmodule Liteskill.Chat.ConversationAggregate do
 
   def apply_event(state, %{event_type: "ConversationArchived", data: _data}) do
     %{state | status: :archived}
+  end
+
+  def apply_event(state, %{event_type: "ConversationTruncated", data: data}) do
+    message_id = data["message_id"]
+    # Messages are newest-first. Drop the target and everything newer than it.
+    kept =
+      state.messages
+      |> Enum.drop_while(&(&1.id != message_id))
+      |> Enum.drop(1)
+
+    %{state | messages: kept, status: :active, current_stream: nil}
   end
 end

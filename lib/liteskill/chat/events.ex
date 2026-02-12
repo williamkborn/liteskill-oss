@@ -16,7 +16,8 @@ defmodule Liteskill.Chat.Events do
     ToolCallCompleted,
     ConversationForked,
     ConversationTitleUpdated,
-    ConversationArchived
+    ConversationArchived,
+    ConversationTruncated
   }
 
   @event_types %{
@@ -30,7 +31,8 @@ defmodule Liteskill.Chat.Events do
     "ToolCallCompleted" => ToolCallCompleted,
     "ConversationForked" => ConversationForked,
     "ConversationTitleUpdated" => ConversationTitleUpdated,
-    "ConversationArchived" => ConversationArchived
+    "ConversationArchived" => ConversationArchived,
+    "ConversationTruncated" => ConversationTruncated
   }
 
   @event_types_reverse Map.new(@event_types, fn {k, v} -> {v, k} end)

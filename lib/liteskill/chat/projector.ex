@@ -310,6 +310,49 @@ defmodule Liteskill.Chat.Projector do
     end)
   end
 
+  defp project_event(%Event{
+         event_type: "ConversationTruncated",
+         data: data,
+         stream_id: stream_id
+       }) do
+    with_conversation(stream_id, fn conversation ->
+      case Repo.get(Message, data["message_id"]) do
+        nil ->
+          # coveralls-ignore-start
+          Logger.warning(
+            "Projector: truncation target message #{data["message_id"]} not found, skipping"
+          )
+
+        # coveralls-ignore-stop
+
+        target_message ->
+          {:ok, _} =
+            Repo.transaction(fn ->
+              # Delete target message and everything after it (cascade deletes chunks + tool_calls)
+              {deleted, _} =
+                from(m in Message,
+                  where:
+                    m.conversation_id == ^conversation.id and
+                      m.position >= ^target_message.position
+                )
+                |> Repo.delete_all()
+
+              Logger.info(
+                # coveralls-ignore-next-line
+                "Projector: truncated #{deleted} message(s) at position >= #{target_message.position}"
+              )
+
+              conversation
+              |> Conversation.changeset(%{
+                message_count: target_message.position - 1,
+                status: "active"
+              })
+              |> Repo.update!()
+            end)
+      end
+    end)
+  end
+
   defp project_event(_event), do: :ok
 
   defp do_rebuild do

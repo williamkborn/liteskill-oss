@@ -44,7 +44,8 @@ defmodule Liteskill.BuiltinTools.Reports do
       %{
         "name" => "reports__get",
         "description" =>
-          "Get a report rendered as markdown. Sections are rendered as # headings at appropriate depth. " <>
+          "Get a report rendered as markdown. The report title is the first line as a # heading. " <>
+            "Sections are rendered as ## headings at appropriate depth. " <>
             "Section comments (if any) appear as blockquotes with author type, status, and ID.",
         "inputSchema" => %{
           "type" => "object",
@@ -209,8 +210,8 @@ defmodule Liteskill.BuiltinTools.Reports do
   defp do_get(user_id, %{"report_id" => report_id}) do
     case Reports.get_report(report_id, user_id) do
       {:ok, report} ->
-        markdown = Reports.render_markdown(report)
-        {:ok, %{"title" => report.title, "markdown" => markdown}}
+        markdown = Reports.render_markdown(report, start_depth: 2)
+        {:ok, "# #{report.title}\n\n#{markdown}" |> String.trim()}
 
       {:error, reason} ->
         {:error, reason}
@@ -255,6 +256,10 @@ defmodule Liteskill.BuiltinTools.Reports do
   end
 
   defp do_delete(_user_id, _input), do: {:error, "Missing required field: report_id"}
+
+  defp wrap_result({:ok, text}) when is_binary(text) do
+    {:ok, %{"content" => [%{"type" => "text", "text" => text}]}}
+  end
 
   defp wrap_result({:ok, data}) do
     {:ok, %{"content" => [%{"type" => "text", "text" => Jason.encode!(data)}]}}

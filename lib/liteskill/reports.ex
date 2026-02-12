@@ -669,8 +669,9 @@ defmodule Liteskill.Reports do
         sections
       end
 
+    start_depth = Keyword.get(opts, :start_depth, 1)
     tree = build_tree(sections, nil)
-    section_md = render_tree(tree, 1, include_comments)
+    section_md = render_tree(tree, start_depth, include_comments)
 
     (report_comments_md <> section_md) |> String.trim()
   end

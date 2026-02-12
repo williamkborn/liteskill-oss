@@ -56,6 +56,7 @@ defmodule LiteskillWeb.Router do
     live_session :chat,
       on_mount: [{LiteskillWeb.Plugs.LiveAuth, :require_authenticated}] do
       live "/", ChatLive, :index
+      live "/conversations", ChatLive, :conversations
       live "/c/:conversation_id", ChatLive, :show
       live "/profile", ChatLive, :info
       live "/profile/password", ChatLive, :password

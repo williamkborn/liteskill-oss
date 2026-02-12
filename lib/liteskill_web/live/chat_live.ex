@@ -47,6 +47,7 @@ defmodule LiteskillWeb.ChatLive do
        show_tool_picker: false,
        auto_confirm_tools: true,
        pending_tool_calls: [],
+       tool_call_modal: nil,
        tools_loading: false,
        stream_task_pid: nil,
        inspecting_server: nil,
@@ -68,7 +69,21 @@ defmodule LiteskillWeb.ChatLive do
        sidebar_sources: [],
        show_source_modal: false,
        source_modal_data: %{},
-       stream_error: nil
+       stream_error: nil,
+       # Edit message state
+       editing_message_id: nil,
+       editing_message_content: "",
+       edit_selected_server_ids: MapSet.new(),
+       edit_show_tool_picker: false,
+       edit_auto_confirm_tools: true,
+       # Conversations management view
+       managed_conversations: [],
+       conversations_page: 1,
+       conversations_search: "",
+       conversations_total: 0,
+       conversations_selected: MapSet.new(),
+       conversations_page_size: 20,
+       confirm_bulk_delete: false
      )
      |> assign(WikiLive.wiki_assigns())
      |> assign(ReportsLive.reports_assigns())
@@ -118,6 +133,32 @@ defmodule LiteskillWeb.ChatLive do
       pending_tool_calls: [],
       wiki_sidebar_tree: [],
       page_title: "Liteskill"
+    )
+  end
+
+  defp apply_action(socket, :conversations, _params) do
+    maybe_unsubscribe(socket)
+    user_id = socket.assigns.current_user.id
+    page_size = socket.assigns.conversations_page_size
+
+    managed = Chat.list_conversations(user_id, limit: page_size, offset: 0)
+    total = Chat.count_conversations(user_id)
+
+    socket
+    |> assign(
+      conversation: nil,
+      messages: [],
+      streaming: false,
+      stream_content: "",
+      pending_tool_calls: [],
+      wiki_sidebar_tree: [],
+      managed_conversations: managed,
+      conversations_page: 1,
+      conversations_search: "",
+      conversations_total: total,
+      conversations_selected: MapSet.new(),
+      confirm_bulk_delete: false,
+      page_title: "Conversations"
     )
   end
 
@@ -222,7 +263,9 @@ defmodule LiteskillWeb.ChatLive do
     ReportsLive.apply_reports_action(socket, action, params)
   end
 
-  defp apply_action(socket, :show, %{"conversation_id" => conversation_id}) do
+  defp apply_action(socket, :show, params) do
+    conversation_id = params["conversation_id"]
+    auto_stream = params["auto_stream"] == "1"
     user_id = socket.assigns.current_user.id
 
     # Unsubscribe from previous conversation
@@ -247,16 +290,38 @@ defmodule LiteskillWeb.ChatLive do
 
         pending = if streaming, do: load_pending_tool_calls(conversation.messages), else: []
 
-        socket
-        |> assign(
-          conversation: conversation,
-          messages: conversation.messages,
-          streaming: streaming,
-          stream_content: "",
-          pending_tool_calls: pending,
-          wiki_sidebar_tree: [],
-          page_title: conversation.title
-        )
+        socket =
+          socket
+          |> assign(
+            conversation: conversation,
+            messages: conversation.messages,
+            streaming: streaming,
+            stream_content: "",
+            pending_tool_calls: pending,
+            wiki_sidebar_tree: [],
+            page_title: conversation.title
+          )
+
+        # Auto-start stream after navigation from new conversation creation
+        if auto_stream && !streaming do
+          last_user_msg =
+            conversation.messages
+            |> Enum.filter(&(&1.role == "user"))
+            |> List.last()
+
+          tool_config = if last_user_msg, do: last_user_msg.tool_config
+          pid = trigger_llm_stream(conversation, user_id, socket, tool_config)
+
+          assign(socket,
+            streaming: true,
+            stream_content: "",
+            stream_error: nil,
+            pending_tool_calls: [],
+            stream_task_pid: pid
+          )
+        else
+          socket
+        end
 
       {:error, _} ->
         socket
@@ -297,12 +362,25 @@ defmodule LiteskillWeb.ChatLive do
           </div>
         </div>
 
-        <div class="p-3 min-w-64">
+        <div class="flex items-center justify-between px-3 py-2 min-w-64">
+          <.link
+            navigate={~p"/conversations"}
+            class={[
+              "text-sm font-semibold tracking-wide hover:text-primary transition-colors",
+              if(@live_action == :conversations,
+                do: "text-primary",
+                else: "text-base-content/70"
+              )
+            ]}
+          >
+            Conversations
+          </.link>
           <button
             phx-click="new_conversation"
-            class="btn btn-secondary btn-sm w-full gap-2"
+            class="btn btn-ghost btn-sm btn-circle"
+            title="New Chat"
           >
-            <.icon name="hero-plus-micro" class="size-4" /> New Chat
+            <.icon name="hero-plus-micro" class="size-4" />
           </button>
         </div>
 
@@ -1063,7 +1141,140 @@ defmodule LiteskillWeb.ChatLive do
             group_members={@group_members}
           />
         <% end %>
-        <%= if @live_action not in [:sources, :source_show, :wiki, :wiki_page_show, :mcp_servers, :reports, :report_show] and not ProfileLive.profile_action?(@live_action) do %>
+        <%= if @live_action == :conversations do %>
+          <div class="flex-1 flex flex-col min-w-0">
+            <header class="px-4 py-3 border-b border-base-300 flex-shrink-0">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <button
+                    :if={!@sidebar_open}
+                    phx-click="toggle_sidebar"
+                    class="btn btn-circle btn-ghost btn-sm"
+                  >
+                    <.icon name="hero-bars-3-micro" class="size-5" />
+                  </button>
+                  <h1 class="text-lg font-semibold">Conversations</h1>
+                  <span class="text-sm text-base-content/50">
+                    ({@conversations_total})
+                  </span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <button
+                    :if={MapSet.size(@conversations_selected) > 0}
+                    phx-click="confirm_bulk_archive"
+                    class="btn btn-error btn-sm gap-1"
+                  >
+                    <.icon name="hero-trash-micro" class="size-4" />
+                    Archive ({MapSet.size(@conversations_selected)})
+                  </button>
+                </div>
+              </div>
+            </header>
+
+            <div class="p-4 border-b border-base-300">
+              <form phx-change="conversations_search" phx-submit="conversations_search">
+                <input
+                  type="text"
+                  name="search"
+                  value={@conversations_search}
+                  placeholder="Search conversations..."
+                  class="input input-bordered input-sm w-full max-w-sm"
+                  phx-debounce="300"
+                  autocomplete="off"
+                />
+              </form>
+            </div>
+
+            <div class="flex-1 overflow-y-auto">
+              <div :if={@managed_conversations != []} class="divide-y divide-base-200">
+                <div class="flex items-center gap-3 px-4 py-2 bg-base-200/50 text-xs text-base-content/60 sticky top-0">
+                  <input
+                    type="checkbox"
+                    class="checkbox checkbox-sm checkbox-primary"
+                    checked={
+                      MapSet.size(@conversations_selected) == length(@managed_conversations) and
+                        @managed_conversations != []
+                    }
+                    phx-click="toggle_select_all_conversations"
+                  />
+                  <span>Select all</span>
+                </div>
+                <div
+                  :for={conv <- @managed_conversations}
+                  class={[
+                    "flex items-center gap-3 px-4 py-3 hover:bg-base-200/50 transition-colors",
+                    MapSet.member?(@conversations_selected, conv.id) && "bg-primary/5"
+                  ]}
+                >
+                  <input
+                    type="checkbox"
+                    class="checkbox checkbox-sm checkbox-primary"
+                    checked={MapSet.member?(@conversations_selected, conv.id)}
+                    phx-click="toggle_select_conversation"
+                    phx-value-id={conv.id}
+                  />
+                  <.link navigate={~p"/c/#{conv.id}"} class="flex-1 min-w-0">
+                    <p class="text-sm font-medium truncate">{conv.title}</p>
+                    <p class="text-xs text-base-content/50">
+                      {Calendar.strftime(conv.updated_at, "%b %d, %Y %H:%M")} · {conv.message_count ||
+                        0} messages
+                    </p>
+                  </.link>
+                  <button
+                    phx-click="confirm_delete_conversation"
+                    phx-value-id={conv.id}
+                    class="btn btn-ghost btn-xs text-base-content/40 hover:text-error"
+                  >
+                    <.icon name="hero-trash-micro" class="size-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              <p
+                :if={@managed_conversations == []}
+                class="text-base-content/50 text-center py-12"
+              >
+                {if @conversations_search != "",
+                  do: "No conversations match your search.",
+                  else: "No conversations yet."}
+              </p>
+
+              <div
+                :if={@conversations_total > @conversations_page_size}
+                class="flex justify-center items-center gap-2 py-4 border-t border-base-200"
+              >
+                <button
+                  :if={@conversations_page > 1}
+                  phx-click="conversations_page"
+                  phx-value-page={@conversations_page - 1}
+                  class="btn btn-ghost btn-sm"
+                >
+                  Previous
+                </button>
+                <span class="text-sm text-base-content/60">
+                  Page {@conversations_page} of {ceil(@conversations_total / @conversations_page_size)}
+                </span>
+                <button
+                  :if={@conversations_page * @conversations_page_size < @conversations_total}
+                  phx-click="conversations_page"
+                  phx-value-page={@conversations_page + 1}
+                  class="btn btn-ghost btn-sm"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <ChatComponents.confirm_modal
+            show={@confirm_bulk_delete}
+            title="Archive conversations"
+            message={"Are you sure you want to archive #{MapSet.size(@conversations_selected)} conversation(s)?"}
+            confirm_event="bulk_archive_conversations"
+            cancel_event="cancel_bulk_archive"
+          />
+        <% end %>
+        <%= if @live_action not in [:sources, :source_show, :wiki, :wiki_page_show, :mcp_servers, :reports, :report_show, :conversations] and not ProfileLive.profile_action?(@live_action) do %>
           <%= if @conversation do %>
             <%!-- Active conversation --%>
             <div class="flex flex-1 min-w-0 overflow-hidden">
@@ -1082,12 +1293,22 @@ defmodule LiteskillWeb.ChatLive do
                 </header>
 
                 <div id="messages" phx-hook="ScrollBottom" class="flex-1 overflow-y-auto px-4 py-4">
-                  <%= for msg <- @messages do %>
+                  <%= for msg <- display_messages(@messages, @editing_message_id) do %>
                     <ChatComponents.message_bubble
                       :if={msg.content && msg.content != ""}
                       message={msg}
+                      can_edit={msg.role == "user" && !@streaming && @editing_message_id == nil}
+                      editing={@editing_message_id == msg.id}
+                      editing_content={@editing_message_content}
+                      available_tools={@available_tools}
+                      edit_selected_server_ids={@edit_selected_server_ids}
+                      edit_show_tool_picker={@edit_show_tool_picker}
+                      edit_auto_confirm={@edit_auto_confirm_tools}
                     />
-                    <SourcesComponents.sources_button message={msg} />
+                    <SourcesComponents.sources_button
+                      :if={@editing_message_id != msg.id}
+                      message={msg}
+                    />
                     <%!-- Tool calls for completed messages (inline) --%>
                     <%= if msg.role == "assistant" && msg.stop_reason == "tool_use" do %>
                       <%= for tc <- MessageBuilder.tool_calls_for_message(msg) do %>
@@ -1131,6 +1352,7 @@ defmodule LiteskillWeb.ChatLive do
                   <.form
                     for={@form}
                     phx-submit="send_message"
+                    phx-change="form_changed"
                     class="flex items-center gap-0 border border-base-300 rounded-xl bg-base-100 focus-within:border-primary/50 transition-colors"
                   >
                     <McpComponents.server_picker
@@ -1191,6 +1413,7 @@ defmodule LiteskillWeb.ChatLive do
                 <.form
                   for={@form}
                   phx-submit="send_message"
+                  phx-change="form_changed"
                   class="flex items-center gap-0 border border-base-300 rounded-xl bg-base-100 focus-within:border-primary/50 transition-colors"
                 >
                   <McpComponents.server_picker
@@ -1207,7 +1430,7 @@ defmodule LiteskillWeb.ChatLive do
                     placeholder="Type a message..."
                     rows="1"
                     class="flex-1 bg-transparent border-0 focus:outline-none focus:ring-0 resize-none min-h-[2.5rem] max-h-40 py-2 px-1 text-base-content placeholder:text-base-content/40"
-                  />
+                  >{Phoenix.HTML.Form.input_value(@form, :content)}</textarea>
                   <button
                     type="submit"
                     class="btn btn-ghost btn-sm text-primary hover:bg-primary/10 m-1"
@@ -1253,6 +1476,8 @@ defmodule LiteskillWeb.ChatLive do
         confirm_event="delete_conversation"
         cancel_event="cancel_delete_conversation"
       />
+
+      <McpComponents.tool_call_modal tool_call={@tool_call_modal} />
     </div>
     """
   end
@@ -1425,6 +1650,11 @@ defmodule LiteskillWeb.ChatLive do
   end
 
   @impl true
+  def handle_event("form_changed", %{"message" => params}, socket) do
+    {:noreply, assign(socket, form: to_form(params, as: :message))}
+  end
+
+  @impl true
   def handle_event("send_message", %{"message" => %{"content" => content}}, socket) do
     content = String.trim(content)
 
@@ -1441,12 +1671,7 @@ defmodule LiteskillWeb.ChatLive do
             {:ok, conversation} ->
               case Chat.send_message(conversation.id, user_id, content, tool_config: tool_config) do
                 {:ok, _message} ->
-                  pid = trigger_llm_stream(conversation, user_id, socket, tool_config)
-
-                  {:noreply,
-                   socket
-                   |> assign(stream_task_pid: pid)
-                   |> push_navigate(to: ~p"/c/#{conversation.id}")}
+                  {:noreply, push_navigate(socket, to: "/c/#{conversation.id}?auto_stream=1")}
 
                 {:error, _reason} ->
                   {:noreply, put_flash(socket, :error, "Failed to send message")}
@@ -1501,11 +1726,13 @@ defmodule LiteskillWeb.ChatLive do
     case Chat.archive_conversation(id, user_id) do
       {:ok, _} ->
         conversations = Chat.list_conversations(user_id)
+        socket = assign(socket, conversations: conversations, confirm_delete_id: nil)
 
-        {:noreply,
-         socket
-         |> assign(conversations: conversations, confirm_delete_id: nil)
-         |> push_navigate(to: ~p"/")}
+        if socket.assigns.live_action == :conversations do
+          {:noreply, refresh_managed_conversations(socket)}
+        else
+          {:noreply, push_navigate(socket, to: ~p"/")}
+        end
 
       {:error, _} ->
         {:noreply,
@@ -1513,6 +1740,101 @@ defmodule LiteskillWeb.ChatLive do
          |> assign(confirm_delete_id: nil)
          |> put_flash(:error, "Failed to delete conversation")}
     end
+  end
+
+  # --- Conversations Management Events ---
+
+  @impl true
+  def handle_event("conversations_search", %{"search" => search}, socket) do
+    search_term = String.trim(search)
+    user_id = socket.assigns.current_user.id
+    page_size = socket.assigns.conversations_page_size
+    opts = if search_term != "", do: [search: search_term], else: []
+
+    managed = Chat.list_conversations(user_id, [limit: page_size, offset: 0] ++ opts)
+    total = Chat.count_conversations(user_id, opts)
+
+    {:noreply,
+     assign(socket,
+       managed_conversations: managed,
+       conversations_search: search_term,
+       conversations_page: 1,
+       conversations_total: total,
+       conversations_selected: MapSet.new()
+     )}
+  end
+
+  @impl true
+  def handle_event("conversations_page", %{"page" => page}, socket) do
+    page = String.to_integer(page)
+    user_id = socket.assigns.current_user.id
+    page_size = socket.assigns.conversations_page_size
+    search = socket.assigns.conversations_search
+    opts = if search != "", do: [search: search], else: []
+
+    offset = (page - 1) * page_size
+    managed = Chat.list_conversations(user_id, [limit: page_size, offset: offset] ++ opts)
+
+    {:noreply,
+     assign(socket,
+       managed_conversations: managed,
+       conversations_page: page,
+       conversations_selected: MapSet.new()
+     )}
+  end
+
+  @impl true
+  def handle_event("toggle_select_conversation", %{"id" => id}, socket) do
+    selected = socket.assigns.conversations_selected
+
+    selected =
+      if MapSet.member?(selected, id),
+        do: MapSet.delete(selected, id),
+        else: MapSet.put(selected, id)
+
+    {:noreply, assign(socket, conversations_selected: selected)}
+  end
+
+  @impl true
+  def handle_event("toggle_select_all_conversations", _params, socket) do
+    all_ids = socket.assigns.managed_conversations |> Enum.map(& &1.id) |> MapSet.new()
+    selected = socket.assigns.conversations_selected
+
+    selected =
+      if MapSet.equal?(selected, all_ids) and all_ids != MapSet.new(),
+        do: MapSet.new(),
+        else: all_ids
+
+    {:noreply, assign(socket, conversations_selected: selected)}
+  end
+
+  @impl true
+  def handle_event("confirm_bulk_archive", _params, socket) do
+    {:noreply, assign(socket, confirm_bulk_delete: true)}
+  end
+
+  @impl true
+  def handle_event("cancel_bulk_archive", _params, socket) do
+    {:noreply, assign(socket, confirm_bulk_delete: false)}
+  end
+
+  @impl true
+  def handle_event("bulk_archive_conversations", _params, socket) do
+    user_id = socket.assigns.current_user.id
+    ids = MapSet.to_list(socket.assigns.conversations_selected)
+
+    Chat.bulk_archive_conversations(ids, user_id)
+
+    conversations = Chat.list_conversations(user_id)
+
+    {:noreply,
+     socket
+     |> assign(
+       conversations: conversations,
+       confirm_bulk_delete: false,
+       conversations_selected: MapSet.new()
+     )
+     |> refresh_managed_conversations()}
   end
 
   @impl true
@@ -1547,6 +1869,135 @@ defmodule LiteskillWeb.ChatLive do
     else
       {:noreply, socket}
     end
+  end
+
+  # --- Edit Message Events ---
+
+  @impl true
+  def handle_event("edit_message", %{"message-id" => message_id}, socket) do
+    message = Enum.find(socket.assigns.messages, &(&1.id == message_id))
+
+    if message do
+      server_ids =
+        case message.tool_config do
+          %{"servers" => servers} when is_list(servers) ->
+            servers |> Enum.map(& &1["id"]) |> MapSet.new()
+
+          _ ->
+            MapSet.new()
+        end
+
+      auto_confirm =
+        case message.tool_config do
+          %{"auto_confirm" => val} -> val
+          _ -> true
+        end
+
+      if socket.assigns.available_tools == [] do
+        send(self(), :fetch_tools)
+      end
+
+      {:noreply,
+       assign(socket,
+         editing_message_id: message_id,
+         editing_message_content: message.content,
+         edit_selected_server_ids: server_ids,
+         edit_show_tool_picker: false,
+         edit_auto_confirm_tools: auto_confirm
+       )}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("cancel_edit", _params, socket) do
+    {:noreply, clear_edit_assigns(socket)}
+  end
+
+  @impl true
+  def handle_event("confirm_edit", %{"content" => content}, socket) do
+    content = String.trim(content)
+
+    if content == "" do
+      {:noreply, socket}
+    else
+      conversation = socket.assigns.conversation
+      user_id = socket.assigns.current_user.id
+      message_id = socket.assigns.editing_message_id
+      tool_config = build_edit_tool_config(socket)
+
+      case Chat.edit_message(conversation.id, user_id, message_id, content,
+             tool_config: tool_config
+           ) do
+        {:ok, _message} ->
+          {:ok, updated_conv} = Chat.get_conversation(conversation.id, user_id)
+          pid = trigger_llm_stream(updated_conv, user_id, socket, tool_config)
+
+          {:noreply,
+           socket
+           |> clear_edit_assigns()
+           |> assign(
+             conversation: updated_conv,
+             messages: updated_conv.messages,
+             streaming: true,
+             stream_content: "",
+             stream_error: nil,
+             pending_tool_calls: [],
+             stream_task_pid: pid
+           )}
+
+        {:error, _reason} ->
+          {:noreply, put_flash(socket, :error, "Failed to edit message")}
+      end
+    end
+  end
+
+  @impl true
+  def handle_event("edit_form_changed", %{"content" => content}, socket) do
+    {:noreply, assign(socket, editing_message_content: content)}
+  end
+
+  @impl true
+  def handle_event("edit_toggle_tool_picker", _params, socket) do
+    show = !socket.assigns.edit_show_tool_picker
+
+    if show && socket.assigns.available_tools == [] do
+      send(self(), :fetch_tools)
+      {:noreply, assign(socket, edit_show_tool_picker: true, tools_loading: true)}
+    else
+      {:noreply, assign(socket, edit_show_tool_picker: show)}
+    end
+  end
+
+  @impl true
+  def handle_event("edit_toggle_server", %{"server-id" => server_id}, socket) do
+    selected = socket.assigns.edit_selected_server_ids
+
+    selected =
+      if MapSet.member?(selected, server_id) do
+        MapSet.delete(selected, server_id)
+      else
+        MapSet.put(selected, server_id)
+      end
+
+    {:noreply, assign(socket, edit_selected_server_ids: selected)}
+  end
+
+  @impl true
+  def handle_event("edit_toggle_auto_confirm", _params, socket) do
+    {:noreply, assign(socket, edit_auto_confirm_tools: !socket.assigns.edit_auto_confirm_tools)}
+  end
+
+  @impl true
+  def handle_event("edit_clear_tools", _params, socket) do
+    {:noreply, assign(socket, edit_selected_server_ids: MapSet.new())}
+  end
+
+  @impl true
+  def handle_event("edit_refresh_tools", _params, socket) do
+    send(self(), :fetch_tools)
+    {:noreply, assign(socket, tools_loading: true, available_tools: [])}
   end
 
   # --- Tool Picker Events ---
@@ -1604,6 +2055,17 @@ defmodule LiteskillWeb.ChatLive do
   def handle_event("reject_tool_call", %{"tool-use-id" => tool_use_id}, socket) do
     Chat.broadcast_tool_decision(socket.assigns.conversation.stream_id, tool_use_id, :rejected)
     {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("show_tool_call", %{"tool-use-id" => tool_use_id}, socket) do
+    tc = find_tool_call(socket, tool_use_id)
+    {:noreply, assign(socket, tool_call_modal: tc)}
+  end
+
+  @impl true
+  def handle_event("close_tool_call_modal", _params, socket) do
+    {:noreply, assign(socket, tool_call_modal: nil)}
   end
 
   # --- MCP Server Events ---
@@ -1753,17 +2215,14 @@ defmodule LiteskillWeb.ChatLive do
           "Please address all unaddressed comments on report #{report.id}. " <>
             "Read the report first, then update sections to address each open comment."
 
-        case Chat.send_message(conversation.id, user_id, content) do
-          {:ok, _message} ->
-            # Pre-select Reports builtin tools, then trigger the LLM stream
-            socket = ensure_tools_loaded(socket)
-            socket = select_reports_server(socket)
-            pid = trigger_llm_stream(conversation, user_id, socket)
+        # Pre-select Reports builtin tools and store config on the message
+        socket = ensure_tools_loaded(socket)
+        socket = select_reports_server(socket)
+        tool_config = build_tool_config(socket)
 
-            {:noreply,
-             socket
-             |> assign(stream_task_pid: pid)
-             |> push_navigate(to: ~p"/c/#{conversation.id}")}
+        case Chat.send_message(conversation.id, user_id, content, tool_config: tool_config) do
+          {:ok, _message} ->
+            {:noreply, push_navigate(socket, to: "/c/#{conversation.id}?auto_stream=1")}
 
           # coveralls-ignore-start
           {:error, _reason} ->
@@ -2093,7 +2552,7 @@ defmodule LiteskillWeb.ChatLive do
 
   # --- Helpers ---
 
-  defp trigger_llm_stream(conversation, user_id, socket, tool_config \\ nil) do
+  defp trigger_llm_stream(conversation, user_id, socket, tool_config) do
     {:ok, messages} = Chat.list_messages(conversation.id, user_id)
 
     tool_opts =
@@ -2231,6 +2690,65 @@ defmodule LiteskillWeb.ChatLive do
     end
   end
 
+  defp build_edit_tool_config(socket) do
+    selected = socket.assigns.edit_selected_server_ids
+    available = socket.assigns.available_tools
+
+    selected_tools = Enum.filter(available, &MapSet.member?(selected, &1.server_id))
+
+    if selected_tools == [] do
+      nil
+    else
+      servers =
+        selected_tools
+        |> Enum.map(& &1.server_id)
+        |> Enum.uniq()
+        |> Enum.map(fn sid ->
+          tool = Enum.find(selected_tools, &(&1.server_id == sid))
+          %{"id" => sid, "name" => tool.server_name}
+        end)
+
+      tools =
+        Enum.map(selected_tools, fn tool ->
+          %{
+            "toolSpec" => %{
+              "name" => tool.name,
+              "description" => tool.description || "",
+              "inputSchema" => %{"json" => tool.input_schema || %{}}
+            }
+          }
+        end)
+
+      tool_name_to_server_id = Map.new(selected_tools, &{&1.name, &1.server_id})
+
+      %{
+        "servers" => servers,
+        "tools" => tools,
+        "tool_name_to_server_id" => tool_name_to_server_id,
+        "auto_confirm" => socket.assigns.edit_auto_confirm_tools
+      }
+    end
+  end
+
+  defp clear_edit_assigns(socket) do
+    assign(socket,
+      editing_message_id: nil,
+      editing_message_content: "",
+      edit_selected_server_ids: MapSet.new(),
+      edit_show_tool_picker: false,
+      edit_auto_confirm_tools: true
+    )
+  end
+
+  defp display_messages(messages, nil), do: messages
+
+  defp display_messages(messages, editing_message_id) do
+    # Show messages up to and including the one being edited
+    (Enum.take_while(messages, &(&1.id != editing_message_id)) ++
+       [Enum.find(messages, &(&1.id == editing_message_id))])
+    |> Enum.reject(&is_nil/1)
+  end
+
   defp build_tool_opts_from_config(nil, _user_id), do: []
 
   defp build_tool_opts_from_config(tool_config, user_id) do
@@ -2304,6 +2822,20 @@ defmodule LiteskillWeb.ChatLive do
     end
   end
 
+  defp find_tool_call(socket, tool_use_id) do
+    # Check pending (streaming) tool calls first
+    case Enum.find(socket.assigns.pending_tool_calls, &(&1.tool_use_id == tool_use_id)) do
+      nil ->
+        # Search in DB-loaded messages
+        socket.assigns.messages
+        |> Enum.flat_map(&MessageBuilder.tool_calls_for_message/1)
+        |> Enum.find(&(&1.tool_use_id == tool_use_id))
+
+      tc ->
+        tc
+    end
+  end
+
   defp load_pending_tool_calls(messages) do
     case List.last(messages) do
       %{role: "assistant", stop_reason: "tool_use"} = msg ->
@@ -2326,6 +2858,22 @@ defmodule LiteskillWeb.ChatLive do
       _ ->
         :ok
     end
+  end
+
+  defp refresh_managed_conversations(socket) do
+    user_id = socket.assigns.current_user.id
+    page_size = socket.assigns.conversations_page_size
+    search = socket.assigns.conversations_search
+    opts = if search != "", do: [search: search], else: []
+
+    offset = (socket.assigns.conversations_page - 1) * page_size
+    managed = Chat.list_conversations(user_id, [limit: page_size, offset: offset] ++ opts)
+    total = Chat.count_conversations(user_id, opts)
+
+    assign(socket,
+      managed_conversations: managed,
+      conversations_total: total
+    )
   end
 
   defp truncate_title(content) do

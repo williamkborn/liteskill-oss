@@ -413,6 +413,96 @@ defmodule Liteskill.Chat.ConversationAggregateTest do
     end
   end
 
+  describe "truncate_conversation" do
+    test "truncates messages after target in :active state" do
+      state =
+        apply_commands(ConversationAggregate.init(), [
+          {:create_conversation, create_params()},
+          {:add_user_message, %{message_id: "msg-1", content: "hello"}},
+          {:start_assistant_stream, %{message_id: "asst-1", model_id: "claude"}},
+          {:complete_stream,
+           %{message_id: "asst-1", full_content: "hi", stop_reason: "end_turn"}},
+          {:add_user_message, %{message_id: "msg-2", content: "followup"}}
+        ])
+
+      assert length(state.messages) == 3
+      assert state.status == :active
+
+      {:ok, events} =
+        ConversationAggregate.handle_command(
+          state,
+          {:truncate_conversation, %{message_id: "msg-1"}}
+        )
+
+      new_state = apply_events(state, events)
+      # msg-1 and everything after it is removed (truncation removes the target too)
+      assert new_state.messages == []
+      assert new_state.status == :active
+      assert new_state.current_stream == nil
+    end
+
+    test "works in :streaming state" do
+      state =
+        apply_commands(ConversationAggregate.init(), [
+          {:create_conversation, create_params()},
+          {:add_user_message, %{message_id: "msg-1", content: "hello"}},
+          {:start_assistant_stream, %{message_id: "asst-1", model_id: "claude"}}
+        ])
+
+      assert state.status == :streaming
+
+      {:ok, events} =
+        ConversationAggregate.handle_command(
+          state,
+          {:truncate_conversation, %{message_id: "msg-1"}}
+        )
+
+      new_state = apply_events(state, events)
+      assert new_state.status == :active
+      assert new_state.current_stream == nil
+      assert new_state.messages == []
+    end
+
+    test "returns error for non-existent message" do
+      state =
+        apply_commands(ConversationAggregate.init(), [
+          {:create_conversation, create_params()},
+          {:add_user_message, %{message_id: "msg-1", content: "hello"}}
+        ])
+
+      assert {:error, :message_not_found} =
+               ConversationAggregate.handle_command(
+                 state,
+                 {:truncate_conversation, %{message_id: "nonexistent"}}
+               )
+    end
+
+    test "returns error in :created state" do
+      state = ConversationAggregate.init()
+
+      assert {:error, :no_messages} =
+               ConversationAggregate.handle_command(
+                 state,
+                 {:truncate_conversation, %{message_id: "msg-1"}}
+               )
+    end
+
+    test "returns error in :archived state" do
+      state =
+        apply_commands(ConversationAggregate.init(), [
+          {:create_conversation, create_params()},
+          {:add_user_message, %{message_id: "msg-1", content: "hello"}},
+          {:archive, %{}}
+        ])
+
+      assert {:error, :conversation_archived} =
+               ConversationAggregate.handle_command(
+                 state,
+                 {:truncate_conversation, %{message_id: "msg-1"}}
+               )
+    end
+  end
+
   defp create_params do
     %{conversation_id: "conv-1", user_id: "user-1", title: "Test", model_id: "claude"}
   end

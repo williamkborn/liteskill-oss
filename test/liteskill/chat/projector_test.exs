@@ -696,6 +696,69 @@ defmodule Liteskill.Chat.ProjectorTest do
     assert message.rag_sources == nil
   end
 
+  test "projects ConversationTruncated event — deletes messages after target", %{user: user} do
+    {stream_id, _conversation_id} = create_conversation(user)
+
+    msg1_id = Ecto.UUID.generate()
+    msg2_id = Ecto.UUID.generate()
+    msg3_id = Ecto.UUID.generate()
+
+    {:ok, events} =
+      Store.append_events(stream_id, 1, [
+        %{
+          event_type: "UserMessageAdded",
+          data: %{
+            "message_id" => msg1_id,
+            "content" => "First",
+            "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
+          }
+        },
+        %{
+          event_type: "UserMessageAdded",
+          data: %{
+            "message_id" => msg2_id,
+            "content" => "Second",
+            "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
+          }
+        },
+        %{
+          event_type: "UserMessageAdded",
+          data: %{
+            "message_id" => msg3_id,
+            "content" => "Third",
+            "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
+          }
+        }
+      ])
+
+    Projector.project_events(stream_id, events)
+
+    conv = Repo.one!(from c in Conversation, where: c.stream_id == ^stream_id)
+    assert conv.message_count == 3
+
+    {:ok, truncate_events} =
+      Store.append_events(stream_id, 4, [
+        %{
+          event_type: "ConversationTruncated",
+          data: %{
+            "message_id" => msg1_id,
+            "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
+          }
+        }
+      ])
+
+    Projector.project_events(stream_id, truncate_events)
+
+    # Target (msg1) and everything after it are removed
+    assert Repo.get(Message, msg1_id) == nil
+    assert Repo.get(Message, msg2_id) == nil
+    assert Repo.get(Message, msg3_id) == nil
+
+    conv = Repo.one!(from c in Conversation, where: c.stream_id == ^stream_id)
+    assert conv.message_count == 0
+    assert conv.status == "active"
+  end
+
   defp create_conversation(user) do
     conversation_id = Ecto.UUID.generate()
     stream_id = "conversation-#{conversation_id}"

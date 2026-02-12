@@ -23,6 +23,7 @@ defmodule Liteskill.Aggregate.Loader do
         {:ok, snapshot} ->
           base = Map.from_struct(aggregate_module.init())
           restored = Map.merge(base, atomize_keys(snapshot.data))
+          restored = restore_atom_fields(restored)
           state = struct(aggregate_module, restored)
           {state, snapshot.stream_version}
 
@@ -107,9 +108,46 @@ defmodule Liteskill.Aggregate.Loader do
 
   defp atomize_keys(map) when is_map(map) do
     Map.new(map, fn
-      {key, value} when is_binary(key) -> {String.to_existing_atom(key), value}
+      {key, value} when is_binary(key) ->
+        atom_key =
+          try do
+            String.to_existing_atom(key)
+          rescue
+            # coveralls-ignore-next-line
+            ArgumentError -> key
+          end
+
+        {atom_key, atomize_value(value)}
+
       # coveralls-ignore-next-line
-      {key, value} -> {key, value}
+      {key, value} ->
+        {key, atomize_value(value)}
     end)
   end
+
+  defp atomize_value(map) when is_map(map), do: atomize_keys(map)
+  defp atomize_value(list) when is_list(list), do: Enum.map(list, &atomize_value/1)
+  defp atomize_value(value), do: value
+
+  # Atom fields (like :status) lose their type through JSONB round-trip.
+  # Convert known string values back to atoms.
+  @atom_status_values ~w(created active streaming archived)a
+  defp restore_atom_fields(%{status: status} = map) when is_binary(status) do
+    atom =
+      try do
+        String.to_existing_atom(status)
+      rescue
+        # coveralls-ignore-next-line
+        ArgumentError -> status
+      end
+
+    if atom in @atom_status_values do
+      %{map | status: atom}
+    else
+      # coveralls-ignore-next-line
+      map
+    end
+  end
+
+  defp restore_atom_fields(map), do: map
 end

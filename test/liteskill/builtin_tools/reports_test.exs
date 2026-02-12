@@ -85,11 +85,12 @@ defmodule Liteskill.BuiltinTools.ReportsTest do
       {:ok, result} =
         ReportsTool.call_tool("reports__get", %{"report_id" => report_id}, ctx)
 
-      data = decode_content(result)
-      assert data["markdown"] =~ "# Introduction"
-      assert data["markdown"] =~ "Hello world"
-      assert data["markdown"] =~ "## Key Points"
-      assert data["markdown"] =~ "Important stuff"
+      md = extract_text(result)
+      assert md =~ "# Test"
+      assert md =~ "## Introduction"
+      assert md =~ "Hello world"
+      assert md =~ "### Key Points"
+      assert md =~ "Important stuff"
     end
 
     test "modify_sections delete flow", %{user: user} do
@@ -267,7 +268,7 @@ defmodule Liteskill.BuiltinTools.ReportsTest do
       {:ok, result} =
         ReportsTool.call_tool("reports__get", %{"report_id" => report_id}, ctx)
 
-      md = decode_content(result)["markdown"]
+      md = extract_text(result)
       assert md =~ "Needs improvement"
       assert md =~ "[AGENT]"
       assert md =~ "id:"
@@ -300,7 +301,7 @@ defmodule Liteskill.BuiltinTools.ReportsTest do
       {:ok, result} =
         ReportsTool.call_tool("reports__get", %{"report_id" => report_id}, ctx)
 
-      md = decode_content(result)["markdown"]
+      md = extract_text(result)
       assert md =~ "Report-level note"
     end
 
@@ -395,4 +396,6 @@ defmodule Liteskill.BuiltinTools.ReportsTest do
   defp decode_content(%{"content" => [%{"text" => json}]}) do
     Jason.decode!(json)
   end
+
+  defp extract_text(%{"content" => [%{"text" => text}]}), do: text
 end

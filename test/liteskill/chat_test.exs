@@ -159,6 +159,74 @@ defmodule Liteskill.ChatTest do
       assert length(conversations) == 1
       assert hd(conversations).id == conv.id
     end
+
+    test "filters by search term", %{user: user} do
+      {:ok, _} = Chat.create_conversation(%{user_id: user.id, title: "Alpha project"})
+      {:ok, _} = Chat.create_conversation(%{user_id: user.id, title: "Beta project"})
+      {:ok, _} = Chat.create_conversation(%{user_id: user.id, title: "Gamma release"})
+
+      assert length(Chat.list_conversations(user.id, search: "project")) == 2
+      assert length(Chat.list_conversations(user.id, search: "gamma")) == 1
+      assert Chat.list_conversations(user.id, search: "nonexistent") == []
+    end
+
+    test "search escapes percent characters", %{user: user} do
+      {:ok, _} = Chat.create_conversation(%{user_id: user.id, title: "100% done"})
+      {:ok, _} = Chat.create_conversation(%{user_id: user.id, title: "Other chat"})
+
+      assert length(Chat.list_conversations(user.id, search: "100%")) == 1
+    end
+  end
+
+  describe "count_conversations/2" do
+    test "returns total count", %{user: user} do
+      for i <- 1..3, do: Chat.create_conversation(%{user_id: user.id, title: "Chat #{i}"})
+      assert Chat.count_conversations(user.id) == 3
+    end
+
+    test "excludes archived", %{user: user} do
+      {:ok, conv} = Chat.create_conversation(%{user_id: user.id, title: "Archived"})
+      {:ok, _} = Chat.create_conversation(%{user_id: user.id, title: "Active"})
+      Chat.archive_conversation(conv.id, user.id)
+
+      assert Chat.count_conversations(user.id) == 1
+    end
+
+    test "respects search filter", %{user: user} do
+      {:ok, _} = Chat.create_conversation(%{user_id: user.id, title: "Alpha"})
+      {:ok, _} = Chat.create_conversation(%{user_id: user.id, title: "Beta"})
+
+      assert Chat.count_conversations(user.id, search: "Alpha") == 1
+    end
+
+    test "includes shared conversations", %{user: user, other_user: other} do
+      {:ok, conv} = Chat.create_conversation(%{user_id: user.id, title: "Shared"})
+      {:ok, _} = Chat.grant_conversation_access(conv.id, user.id, other.id)
+
+      assert Chat.count_conversations(other.id) == 1
+    end
+  end
+
+  describe "bulk_archive_conversations/2" do
+    test "archives multiple conversations", %{user: user} do
+      {:ok, c1} = Chat.create_conversation(%{user_id: user.id, title: "Chat 1"})
+      {:ok, c2} = Chat.create_conversation(%{user_id: user.id, title: "Chat 2"})
+      {:ok, _c3} = Chat.create_conversation(%{user_id: user.id, title: "Chat 3"})
+
+      assert {:ok, 2} = Chat.bulk_archive_conversations([c1.id, c2.id], user.id)
+      assert length(Chat.list_conversations(user.id)) == 1
+    end
+
+    test "returns ok with 0 for empty list", %{user: _user} do
+      assert {:ok, 0} = Chat.bulk_archive_conversations([], "any-user-id")
+    end
+
+    test "skips unauthorized conversations", %{user: user, other_user: other} do
+      {:ok, own} = Chat.create_conversation(%{user_id: user.id, title: "Mine"})
+      {:ok, foreign} = Chat.create_conversation(%{user_id: other.id, title: "Theirs"})
+
+      assert {:ok, 1} = Chat.bulk_archive_conversations([own.id, foreign.id], user.id)
+    end
   end
 
   describe "get_conversation/2" do
@@ -801,6 +869,73 @@ defmodule Liteskill.ChatTest do
       :ok = Chat.broadcast_tool_decision(stream_id, "tool-456", :rejected)
 
       assert_receive {:tool_decision, "tool-456", :rejected}
+    end
+  end
+
+  describe "truncate_conversation/3" do
+    test "removes target message and everything after", %{user: user} do
+      {:ok, conv} = Chat.create_conversation(%{user_id: user.id})
+      {:ok, msg1} = Chat.send_message(conv.id, user.id, "First")
+      {:ok, msg2} = Chat.send_message(conv.id, user.id, "Second")
+      {:ok, _msg3} = Chat.send_message(conv.id, user.id, "Third")
+
+      {:ok, messages} = Chat.list_messages(conv.id, user.id)
+      assert length(messages) == 3
+
+      # Truncate at msg2 — removes msg2 and msg3, keeps msg1
+      {:ok, updated_conv} = Chat.truncate_conversation(conv.id, user.id, msg2.id)
+      assert updated_conv.message_count == 1
+
+      {:ok, messages} = Chat.list_messages(conv.id, user.id)
+      assert length(messages) == 1
+      assert hd(messages).id == msg1.id
+    end
+
+    test "returns error for non-existent message", %{user: user} do
+      {:ok, conv} = Chat.create_conversation(%{user_id: user.id})
+      {:ok, _msg} = Chat.send_message(conv.id, user.id, "Hello")
+
+      assert {:error, :message_not_found} =
+               Chat.truncate_conversation(conv.id, user.id, Ecto.UUID.generate())
+    end
+
+    test "returns error for unauthorized user", %{user: user, other_user: other_user} do
+      {:ok, conv} = Chat.create_conversation(%{user_id: user.id})
+      {:ok, msg} = Chat.send_message(conv.id, user.id, "Hello")
+
+      assert {:error, :not_found} =
+               Chat.truncate_conversation(conv.id, other_user.id, msg.id)
+    end
+  end
+
+  describe "edit_message/5" do
+    test "replaces target message with edited content", %{user: user} do
+      {:ok, conv} = Chat.create_conversation(%{user_id: user.id})
+      {:ok, msg1} = Chat.send_message(conv.id, user.id, "Original")
+      {:ok, _msg2} = Chat.send_message(conv.id, user.id, "Second")
+
+      {:ok, new_msg} = Chat.edit_message(conv.id, user.id, msg1.id, "Edited content")
+
+      assert new_msg.content == "Edited content"
+      assert new_msg.role == "user"
+
+      {:ok, messages} = Chat.list_messages(conv.id, user.id)
+      # Original msg1 is removed, replaced by the new edited message
+      assert length(messages) == 1
+      assert hd(messages).id == new_msg.id
+      assert hd(messages).content == "Edited content"
+    end
+
+    test "passes tool_config to new message", %{user: user} do
+      {:ok, conv} = Chat.create_conversation(%{user_id: user.id})
+      {:ok, msg1} = Chat.send_message(conv.id, user.id, "Hello")
+
+      tool_config = %{"servers" => [%{"id" => "s1", "name" => "TestServer"}]}
+
+      {:ok, new_msg} =
+        Chat.edit_message(conv.id, user.id, msg1.id, "Edited", tool_config: tool_config)
+
+      assert new_msg.tool_config == tool_config
     end
   end
 end
