@@ -1,0 +1,47 @@
+{{- if .Values.migration.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "liteskill.fullname" . }}-migrate
+  labels:
+    {{- include "liteskill.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ .Values.migration.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "liteskill.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "liteskill.serviceAccountName" . }}
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: {{ include "liteskill.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["bin/liteskill", "eval", "Liteskill.Release.migrate()"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "liteskill.fullname" . }}
+            - secretRef:
+                name: {{ include "liteskill.secretName" . }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

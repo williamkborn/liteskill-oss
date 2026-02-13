@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "liteskill.fullname" . }}
+  labels:
+    {{- include "liteskill.labels" . | nindent 4 }}
+data:
+  PHX_HOST: {{ .Values.config.phxHost | quote }}
+  PORT: {{ .Values.config.port | quote }}
+  POOL_SIZE: {{ .Values.config.poolSize | quote }}
+  ECTO_IPV6: {{ .Values.config.ectoIpv6 | quote }}
+  {{- if .Values.config.dnsClusterQuery }}
+  DNS_CLUSTER_QUERY: {{ .Values.config.dnsClusterQuery | quote }}
+  {{- end }}
+  {{- if .Values.oidc.enabled }}
+  OIDC_ISSUER: {{ .Values.oidc.issuer | quote }}
+  OIDC_CLIENT_ID: {{ .Values.oidc.clientId | quote }}
+  {{- end }}

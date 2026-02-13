@@ -1,0 +1,12 @@
+apiVersion: v2
+name: liteskill
+description: Event-sourced chat application with LLM integration
+type: application
+version: 0.1.3
+appVersion: "0.1.3"
+home: https://github.com/liteskill-ai/liteskill-oss
+sources:
+  - https://github.com/liteskill-ai/liteskill-oss
+maintainers:
+  - name: liteskill-ai
+    url: https://github.com/liteskill-ai

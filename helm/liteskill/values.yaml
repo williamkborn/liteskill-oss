@@ -1,0 +1,99 @@
+# -- Image
+image:
+  repository: ghcr.io/liteskill-ai/liteskill-oss
+  tag: ""              # defaults to Chart.appVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# -- Replicas & scaling
+replicaCount: 1
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+
+# -- Service
+service:
+  type: ClusterIP
+  port: 4000
+
+# -- Ingress
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: liteskill.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# -- App configuration (non-secret env vars → ConfigMap)
+config:
+  phxHost: liteskill.example.com
+  port: "4000"
+  poolSize: "10"
+  dnsClusterQuery: ""       # set for Erlang clustering in k8s
+  ectoIpv6: "false"
+
+# -- OIDC (optional)
+oidc:
+  enabled: false
+  issuer: ""
+  clientId: ""
+  clientSecret: ""           # → Secret
+
+# -- Secrets (required)
+secrets:
+  databaseUrl: ""            # ecto://USER:PASS@HOST/DATABASE
+  secretKeyBase: ""          # mix phx.gen.secret
+  encryptionKey: ""          # openssl rand -base64 32
+  awsBearerToken: ""         # AWS Bedrock bearer token
+  awsRegion: ""              # e.g. us-east-1
+
+  # Reference an existing Secret instead of creating one
+  existingSecret: ""
+  existingSecretKeys:
+    databaseUrl: DATABASE_URL
+    secretKeyBase: SECRET_KEY_BASE
+    encryptionKey: ENCRYPTION_KEY
+    awsBearerToken: AWS_BEARER_TOKEN_BEDROCK
+    awsRegion: AWS_REGION
+    oidcClientSecret: OIDC_CLIENT_SECRET
+
+# -- Database migration job (pre-install/pre-upgrade hook)
+migration:
+  enabled: true
+  backoffLimit: 3
+
+# -- Resources
+resources: {}
+
+# -- Probes
+livenessProbe:
+  httpGet:
+    path: /login
+    port: http
+  initialDelaySeconds: 15
+  periodSeconds: 10
+readinessProbe:
+  httpGet:
+    path: /login
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5
+
+# -- Service account
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# -- Pod-level
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
