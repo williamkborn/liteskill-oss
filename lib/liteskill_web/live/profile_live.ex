@@ -22,7 +22,8 @@ defmodule LiteskillWeb.ProfileLive do
       profile_users: [],
       profile_groups: [],
       group_detail: nil,
-      group_members: []
+      group_members: [],
+      temp_password_user_id: nil
     ]
   end
 
@@ -76,6 +77,7 @@ defmodule LiteskillWeb.ProfileLive do
   attr :profile_groups, :list, default: []
   attr :group_detail, :any
   attr :group_members, :list, default: []
+  attr :temp_password_user_id, :string, default: nil
 
   def profile(assigns) do
     ~H"""
@@ -197,6 +199,10 @@ defmodule LiteskillWeb.ProfileLive do
 
   defp render_tab(%{live_action: :password} = assigns) do
     ~H"""
+    <div :if={@current_user.force_password_change} class="alert alert-warning mb-4">
+      <.icon name="hero-exclamation-triangle-mini" class="size-5" />
+      <span>You must change your password before continuing.</span>
+    </div>
     <div class="card bg-base-100 shadow">
       <div class="card-body">
         <h2 class="card-title mb-4">Change Password</h2>
@@ -343,7 +349,7 @@ defmodule LiteskillWeb.ProfileLive do
                   <td class="text-sm text-base-content/60">
                     {Calendar.strftime(user.inserted_at, "%Y-%m-%d")}
                   </td>
-                  <td>
+                  <td class="flex gap-1">
                     <%= if user.email != User.admin_email() do %>
                       <%= if User.admin?(user) do %>
                         <button
@@ -362,9 +368,45 @@ defmodule LiteskillWeb.ProfileLive do
                           Promote
                         </button>
                       <% end %>
+                      <button
+                        phx-click="show_temp_password_form"
+                        phx-value-id={user.id}
+                        class="btn btn-ghost btn-xs"
+                      >
+                        Set Password
+                      </button>
                     <% else %>
                       <span class="text-xs text-base-content/40">Root</span>
                     <% end %>
+                  </td>
+                </tr>
+                <tr :if={@temp_password_user_id == user.id}>
+                  <td colspan="6">
+                    <form
+                      phx-submit="set_temp_password"
+                      class="flex items-center gap-2 py-2"
+                    >
+                      <input type="hidden" name="user_id" value={user.id} />
+                      <span class="text-sm">
+                        Set temporary password for <strong>{user.email}</strong>:
+                      </span>
+                      <input
+                        type="password"
+                        name="password"
+                        placeholder="Min 12 characters"
+                        class="input input-bordered input-sm w-48"
+                        required
+                        minlength="12"
+                      />
+                      <button type="submit" class="btn btn-primary btn-sm">Set</button>
+                      <button
+                        type="button"
+                        phx-click="cancel_temp_password"
+                        class="btn btn-ghost btn-sm"
+                      >
+                        Cancel
+                      </button>
+                    </form>
                   </td>
                 </tr>
               <% end %>
@@ -670,6 +712,44 @@ defmodule LiteskillWeb.ProfileLive do
 
       {:error, _} ->
         {:noreply, socket}
+    end
+  end
+
+  def handle_event("show_temp_password_form", %{"id" => id}, socket) do
+    {:noreply, Phoenix.Component.assign(socket, temp_password_user_id: id)}
+  end
+
+  def handle_event("cancel_temp_password", _params, socket) do
+    {:noreply, Phoenix.Component.assign(socket, temp_password_user_id: nil)}
+  end
+
+  def handle_event("set_temp_password", %{"user_id" => id, "password" => password}, socket) do
+    if User.admin?(socket.assigns.current_user) do
+      user = Accounts.get_user!(id)
+
+      case Accounts.set_temporary_password(user, password) do
+        {:ok, _} ->
+          {:noreply,
+           socket
+           |> Phoenix.Component.assign(
+             temp_password_user_id: nil,
+             profile_users: Accounts.list_users()
+           )
+           |> Phoenix.LiveView.put_flash(
+             :info,
+             "Temporary password set. User must change it on next login."
+           )}
+
+        {:error, _} ->
+          {:noreply,
+           Phoenix.LiveView.put_flash(
+             socket,
+             :error,
+             "Failed to set password. Ensure it is at least 12 characters."
+           )}
+      end
+    else
+      {:noreply, socket}
     end
   end
 end

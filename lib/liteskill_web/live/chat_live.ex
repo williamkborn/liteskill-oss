@@ -1411,6 +1411,7 @@ defmodule LiteskillWeb.ChatLive do
             profile_groups={@profile_groups}
             group_detail={@group_detail}
             group_members={@group_members}
+            temp_password_user_id={@temp_password_user_id}
           />
         <% end %>
         <%= if @live_action == :conversations do %>
