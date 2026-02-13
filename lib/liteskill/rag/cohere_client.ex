@@ -5,6 +5,9 @@ defmodule Liteskill.Rag.CohereClient do
   Supports embed-v4 and rerank-v3.5.
   """
 
+  alias Liteskill.Rag.EmbeddingRequest
+  alias Liteskill.Repo
+
   @embed_model "us.cohere.embed-v4:0"
   @rerank_model "cohere.rerank-v3-5:0"
 
@@ -18,8 +21,10 @@ defmodule Liteskill.Rag.CohereClient do
     - `dimensions` - output dimension (default 1024)
     - `truncate` - truncation strategy (default "RIGHT")
     - `plug` - Req test plug
+    - `user_id` - user ID for embedding request tracking
   """
   def embed(texts, opts \\ []) do
+    {user_id, opts} = Keyword.pop(opts, :user_id)
     {req_opts, body_opts} = Keyword.split(opts, [:plug])
 
     body = %{
@@ -30,17 +35,33 @@ defmodule Liteskill.Rag.CohereClient do
       "truncate" => Keyword.get(body_opts, :truncate, "RIGHT")
     }
 
-    case Req.post(base_req(), [{:url, invoke_url(@embed_model)}, {:json, body}] ++ req_opts) do
-      {:ok, %{status: 200, body: %{"embeddings" => %{"float" => embeddings}}}} ->
-        {:ok, embeddings}
+    start = System.monotonic_time(:millisecond)
 
-      {:ok, %{status: status, body: body}} ->
-        {:error, %{status: status, body: body}}
+    result =
+      case Req.post(base_req(), [{:url, invoke_url(@embed_model)}, {:json, body}] ++ req_opts) do
+        {:ok, %{status: 200, body: %{"embeddings" => %{"float" => embeddings}}}} ->
+          {:ok, embeddings}
 
-      # coveralls-ignore-next-line
-      {:error, reason} ->
-        {:error, reason}
-    end
+        {:ok, %{status: status, body: body}} ->
+          {:error, %{status: status, body: body}}
+
+        # coveralls-ignore-next-line
+        {:error, reason} ->
+          {:error, reason}
+      end
+
+    latency = System.monotonic_time(:millisecond) - start
+
+    log_request(user_id, %{
+      request_type: "embed",
+      model_id: @embed_model,
+      input_count: length(texts),
+      token_count: estimate_token_count(texts),
+      latency_ms: latency,
+      result: result
+    })
+
+    result
   end
 
   @doc """
@@ -50,8 +71,10 @@ defmodule Liteskill.Rag.CohereClient do
     - `top_n` - number of top results (default 5)
     - `max_tokens_per_doc` - max tokens per document (default 4096)
     - `plug` - Req test plug
+    - `user_id` - user ID for embedding request tracking
   """
   def rerank(query, documents, opts \\ []) do
+    {user_id, opts} = Keyword.pop(opts, :user_id)
     {req_opts, body_opts} = Keyword.split(opts, [:plug])
 
     body = %{
@@ -62,17 +85,33 @@ defmodule Liteskill.Rag.CohereClient do
       "api_version" => 2
     }
 
-    case Req.post(base_req(), [{:url, invoke_url(@rerank_model)}, {:json, body}] ++ req_opts) do
-      {:ok, %{status: 200, body: %{"results" => results}}} ->
-        {:ok, results}
+    start = System.monotonic_time(:millisecond)
 
-      {:ok, %{status: status, body: body}} ->
-        {:error, %{status: status, body: body}}
+    result =
+      case Req.post(base_req(), [{:url, invoke_url(@rerank_model)}, {:json, body}] ++ req_opts) do
+        {:ok, %{status: 200, body: %{"results" => results}}} ->
+          {:ok, results}
 
-      # coveralls-ignore-next-line
-      {:error, reason} ->
-        {:error, reason}
-    end
+        {:ok, %{status: status, body: body}} ->
+          {:error, %{status: status, body: body}}
+
+        # coveralls-ignore-next-line
+        {:error, reason} ->
+          {:error, reason}
+      end
+
+    latency = System.monotonic_time(:millisecond) - start
+
+    log_request(user_id, %{
+      request_type: "rerank",
+      model_id: @rerank_model,
+      input_count: length(documents),
+      token_count: estimate_token_count([query | documents]),
+      latency_ms: latency,
+      result: result
+    })
+
+    result
   end
 
   defp base_req do
@@ -94,5 +133,45 @@ defmodule Liteskill.Rag.CohereClient do
   defp config(key) do
     Application.get_env(:liteskill, Liteskill.LLM, [])
     |> Keyword.get(key)
+  end
+
+  defp log_request(nil, _attrs), do: :ok
+
+  defp log_request(user_id, attrs) do
+    {status, error_message} =
+      case attrs.result do
+        {:ok, _} -> {"success", nil}
+        {:error, %{status: s, body: _}} -> {"error", "HTTP #{s}"}
+        # coveralls-ignore-next-line
+        {:error, _} -> {"error", "request_failed"}
+      end
+
+    try do
+      %EmbeddingRequest{}
+      |> EmbeddingRequest.changeset(%{
+        request_type: attrs.request_type,
+        status: status,
+        latency_ms: attrs.latency_ms,
+        input_count: attrs.input_count,
+        token_count: attrs.token_count,
+        model_id: attrs.model_id,
+        error_message: error_message,
+        user_id: user_id
+      })
+      |> Repo.insert()
+    rescue
+      # coveralls-ignore-start
+      _ ->
+        :ok
+        # coveralls-ignore-stop
+    end
+  end
+
+  defp estimate_token_count(texts) do
+    texts
+    |> Enum.map(fn text ->
+      text |> String.split(~r/\s+/) |> length() |> Kernel.*(4) |> div(3)
+    end)
+    |> Enum.sum()
   end
 end

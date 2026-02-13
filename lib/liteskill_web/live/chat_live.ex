@@ -10,6 +10,7 @@ defmodule LiteskillWeb.ChatLive do
   alias LiteskillWeb.ChatComponents
   alias LiteskillWeb.McpComponents
   alias LiteskillWeb.ProfileLive
+  alias LiteskillWeb.{PipelineComponents, PipelineLive}
   alias LiteskillWeb.{ReportComponents, ReportsLive}
   alias LiteskillWeb.{SourcesComponents, WikiComponents, WikiLive}
 
@@ -58,6 +59,9 @@ defmodule LiteskillWeb.ChatLive do
        confirm_delete_source_id: nil,
        data_sources: [],
        current_source: nil,
+       source_document: nil,
+       rag_document: nil,
+       rag_chunks: [],
        source_documents: %{documents: [], page: 1, page_size: 20, total: 0, total_pages: 1},
        source_search: "",
        # RAG query
@@ -96,6 +100,7 @@ defmodule LiteskillWeb.ChatLive do
      )
      |> assign(WikiLive.wiki_assigns())
      |> assign(ReportsLive.reports_assigns())
+     |> assign(PipelineLive.pipeline_assigns())
      |> assign(ProfileLive.profile_assigns()), layout: {LiteskillWeb.Layouts, :chat}}
   end
 
@@ -191,6 +196,11 @@ defmodule LiteskillWeb.ChatLive do
     )
   end
 
+  defp apply_action(socket, :pipeline, params) do
+    maybe_unsubscribe(socket)
+    PipelineLive.apply_pipeline_action(socket, :pipeline, params)
+  end
+
   defp apply_action(socket, :sources, _params) do
     maybe_unsubscribe(socket)
     user_id = socket.assigns.current_user.id
@@ -234,8 +244,7 @@ defmodule LiteskillWeb.ChatLive do
         result =
           Liteskill.DataSources.list_documents_paginated(source_ref, user_id,
             page: 1,
-            search: if(search == "", do: nil, else: search),
-            parent_id: nil
+            search: if(search == "", do: nil, else: search)
           )
 
         socket
@@ -255,6 +264,45 @@ defmodule LiteskillWeb.ChatLive do
       {:error, _} ->
         socket
         |> put_flash(:error, "Source not found")
+        |> push_navigate(to: ~p"/sources")
+    end
+  end
+
+  defp apply_action(
+         socket,
+         :source_document_show,
+         %{"source_id" => source_url_id, "document_id" => doc_id}
+       ) do
+    maybe_unsubscribe(socket)
+    user_id = socket.assigns.current_user.id
+    source_id = source_id_from_url(source_url_id)
+
+    with {:ok, source} <- Liteskill.DataSources.get_source(source_id, user_id),
+         {:ok, doc} <- Liteskill.DataSources.get_document(doc_id, user_id) do
+      {rag_doc, chunks} =
+        case Liteskill.Rag.get_rag_document_for_source_doc(doc_id, user_id) do
+          {:ok, rd} -> {rd, Liteskill.Rag.list_chunks_for_document(rd.id)}
+          {:error, _} -> {nil, []}
+        end
+
+      socket
+      |> assign(
+        conversation: nil,
+        messages: [],
+        streaming: false,
+        stream_content: "",
+        pending_tool_calls: [],
+        current_source: source,
+        source_document: doc,
+        rag_document: rag_doc,
+        rag_chunks: chunks,
+        wiki_sidebar_tree: [],
+        page_title: doc.title
+      )
+    else
+      {:error, _} ->
+        socket
+        |> put_flash(:error, "Document not found")
         |> push_navigate(to: ~p"/sources")
     end
   end
@@ -433,7 +481,7 @@ defmodule LiteskillWeb.ChatLive do
             navigate={~p"/sources"}
             class={[
               "flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm transition-colors",
-              if(@live_action in [:sources, :source_show],
+              if(@live_action in [:sources, :source_show, :source_document_show],
                 do: "bg-primary/10 text-primary font-medium",
                 else: "hover:bg-base-200 text-base-content/70"
               )
@@ -490,6 +538,18 @@ defmodule LiteskillWeb.ChatLive do
 
       <%!-- Main Area --%>
       <main class="flex-1 flex flex-col min-w-0">
+        <%= if @live_action == :pipeline do %>
+          <PipelineComponents.pipeline_dashboard
+            stats={@pipeline_stats}
+            rates={@pipeline_rates}
+            chart_data={@pipeline_chart_data}
+            jobs={@pipeline_jobs}
+            job_search={@pipeline_job_search}
+            scope={@pipeline_scope}
+            is_admin={@pipeline_is_admin}
+            window={@pipeline_window}
+          />
+        <% end %>
         <%= if @live_action == :sources do %>
           <%!-- Data Sources --%>
           <header class="px-4 py-3 border-b border-base-300 flex-shrink-0">
@@ -504,6 +564,9 @@ defmodule LiteskillWeb.ChatLive do
                 </button>
                 <h1 class="text-lg font-semibold">Data Sources</h1>
               </div>
+              <.link navigate={~p"/sources/pipeline"} class="btn btn-ghost btn-sm gap-1">
+                <.icon name="hero-chart-bar-micro" class="size-4" /> Pipeline
+              </.link>
               <button phx-click="open_rag_query" class="btn btn-ghost btn-sm gap-1">
                 <.icon name="hero-magnifying-glass-micro" class="size-4" /> RAG Query
               </button>
@@ -582,6 +645,114 @@ defmodule LiteskillWeb.ChatLive do
               result={@source_documents}
               search={@source_search}
             />
+          </div>
+        <% end %>
+        <%= if @live_action == :source_document_show && @source_document do %>
+          <%!-- Document RAG Detail --%>
+          <header class="px-4 py-3 border-b border-base-300 flex-shrink-0">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <button
+                  :if={!@sidebar_open}
+                  phx-click="toggle_sidebar"
+                  class="btn btn-circle btn-ghost btn-sm"
+                >
+                  <.icon name="hero-bars-3-micro" class="size-5" />
+                </button>
+                <.link
+                  navigate={~p"/sources/#{SourcesComponents.source_url_id(@current_source)}"}
+                  class="btn btn-ghost btn-xs"
+                >
+                  <.icon name="hero-arrow-left-micro" class="size-4" />
+                </.link>
+                <h1 class="text-lg font-semibold truncate">{@source_document.title}</h1>
+              </div>
+              <.link
+                navigate={document_go_url(@current_source, @source_document)}
+                class="btn btn-primary btn-sm gap-1"
+              >
+                <.icon name="hero-arrow-top-right-on-square-micro" class="size-4" /> Go
+              </.link>
+            </div>
+          </header>
+
+          <div class="flex-1 overflow-y-auto p-4 max-w-3xl mx-auto w-full space-y-6">
+            <%!-- Stats Card --%>
+            <div class="card bg-base-200/50 border border-base-300">
+              <div class="card-body p-4 space-y-3">
+                <h3 class="font-semibold text-sm">RAG Index</h3>
+                <%= if @rag_document do %>
+                  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div>
+                      <p class="text-xs text-base-content/50">Status</p>
+                      <span class={[
+                        "badge badge-sm",
+                        if(@rag_document.status == "embedded",
+                          do: "badge-success",
+                          else: "badge-warning"
+                        )
+                      ]}>
+                        {@rag_document.status}
+                      </span>
+                    </div>
+                    <div>
+                      <p class="text-xs text-base-content/50">Chunks</p>
+                      <p class="font-mono text-sm">{length(@rag_chunks)}</p>
+                    </div>
+                    <div>
+                      <p class="text-xs text-base-content/50">Total Tokens</p>
+                      <p class="font-mono text-sm">
+                        {Enum.sum(Enum.map(@rag_chunks, fn c -> c.token_count || 0 end))}
+                      </p>
+                    </div>
+                    <div>
+                      <p class="text-xs text-base-content/50">Document Hash</p>
+                      <p class="font-mono text-xs truncate" title={@rag_document.content_hash}>
+                        {truncate_hash(@rag_document.content_hash)}
+                      </p>
+                    </div>
+                  </div>
+                <% else %>
+                  <p class="text-sm text-base-content/50">
+                    Not indexed. This document has no RAG data yet.
+                  </p>
+                <% end %>
+              </div>
+            </div>
+
+            <%!-- Chunks --%>
+            <%= if @rag_chunks != [] do %>
+              <div class="space-y-3">
+                <h3 class="font-semibold text-sm">
+                  Chunks ({length(@rag_chunks)})
+                </h3>
+                <div
+                  :for={chunk <- @rag_chunks}
+                  class="card bg-base-100 border border-base-300 overflow-hidden"
+                >
+                  <div class="flex items-center justify-between px-3 py-2 bg-base-200/50 text-xs">
+                    <div class="flex items-center gap-3">
+                      <span class="badge badge-sm badge-primary font-mono">
+                        #{chunk.position}
+                      </span>
+                      <span :if={chunk.token_count} class="text-base-content/60">
+                        {chunk.token_count} tokens
+                      </span>
+                    </div>
+                    <span
+                      :if={chunk.content_hash}
+                      class="font-mono text-base-content/40"
+                      title={chunk.content_hash}
+                    >
+                      {truncate_hash(chunk.content_hash)}
+                    </span>
+                  </div>
+                  <div class="px-3 py-2">
+                    <pre class="text-xs text-base-content/80 whitespace-pre-wrap font-mono leading-relaxed max-h-48 overflow-y-auto">{chunk.content}</pre>
+                  </div>
+                </div>
+              </div>
+            <% end %>
           </div>
         <% end %>
         <%= if @live_action == :wiki do %>
@@ -1290,7 +1461,7 @@ defmodule LiteskillWeb.ChatLive do
             confirm_label="Archive"
           />
         <% end %>
-        <%= if @live_action not in [:sources, :source_show, :wiki, :wiki_page_show, :mcp_servers, :reports, :report_show, :conversations] and not ProfileLive.profile_action?(@live_action) do %>
+        <%= if @live_action not in [:sources, :source_show, :source_document_show, :wiki, :wiki_page_show, :mcp_servers, :reports, :report_show, :conversations, :pipeline] and not ProfileLive.profile_action?(@live_action) do %>
           <%= if @conversation do %>
             <%!-- Active conversation --%>
             <div class="flex flex-1 min-w-0 overflow-hidden">
@@ -1519,8 +1690,7 @@ defmodule LiteskillWeb.ChatLive do
     result =
       Liteskill.DataSources.list_documents_paginated(source_ref, user_id,
         page: 1,
-        search: if(search == "", do: nil, else: search),
-        parent_id: nil
+        search: if(search == "", do: nil, else: search)
       )
 
     {:noreply, assign(socket, source_search: search, source_documents: result)}
@@ -1535,8 +1705,7 @@ defmodule LiteskillWeb.ChatLive do
     result =
       Liteskill.DataSources.list_documents_paginated(source_ref, user_id,
         page: String.to_integer(page),
-        search: if(search == "", do: nil, else: search),
-        parent_id: nil
+        search: if(search == "", do: nil, else: search)
       )
 
     {:noreply, assign(socket, source_documents: result)}
@@ -2347,6 +2516,15 @@ defmodule LiteskillWeb.ChatLive do
     end
   end
 
+  # --- Pipeline Event Delegation ---
+
+  @pipeline_events ~w(pipeline_toggle_scope pipeline_search_jobs
+    pipeline_jobs_page pipeline_select_window)
+
+  def handle_event(event, params, socket) when event in @pipeline_events do
+    PipelineLive.handle_event(event, params, socket)
+  end
+
   # --- Reports Event Delegation ---
 
   @reports_events ~w(delete_report leave_report export_report add_section_comment
@@ -2622,6 +2800,10 @@ defmodule LiteskillWeb.ChatLive do
     else
       {:noreply, socket}
     end
+  end
+
+  def handle_info(:pipeline_refresh, socket) do
+    PipelineLive.handle_info(:pipeline_refresh, socket)
   end
 
   def handle_info(_msg, socket), do: {:noreply, socket}
@@ -3014,6 +3196,19 @@ defmodule LiteskillWeb.ChatLive do
 
   defp source_id_from_url("builtin-" <> rest), do: "builtin:" <> rest
   defp source_id_from_url(id), do: id
+
+  defp document_go_url(%{id: "builtin:wiki"}, doc), do: ~p"/wiki/#{doc.id}"
+
+  defp document_go_url(_source, doc) do
+    case doc.metadata do
+      %{"url" => url} when is_binary(url) and url != "" -> url
+      _ -> "#"
+    end
+  end
+
+  defp truncate_hash(nil), do: "-"
+  defp truncate_hash(hash) when byte_size(hash) > 12, do: String.slice(hash, 0, 12) <> "..."
+  defp truncate_hash(hash), do: hash
 
   defp maybe_unsubscribe(socket) do
     case socket.assigns[:conversation] do

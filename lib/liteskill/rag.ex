@@ -98,12 +98,14 @@ defmodule Liteskill.Rag do
 
   def create_document(source_id, attrs, user_id) do
     with {:ok, _source} <- get_source(source_id, user_id) do
-      %Document{}
-      |> Document.changeset(
+      attrs =
         attrs
         |> Map.put(:source_id, source_id)
         |> Map.put(:user_id, user_id)
-      )
+        |> maybe_hash_content()
+
+      %Document{}
+      |> Document.changeset(attrs)
       |> Repo.insert()
     end
   end
@@ -146,7 +148,8 @@ defmodule Liteskill.Rag do
 
       case CohereClient.embed(
              texts,
-             [{:input_type, "search_document"}, {:dimensions, dimensions}] ++ plug_opts
+             [{:input_type, "search_document"}, {:dimensions, dimensions}, {:user_id, user_id}] ++
+               plug_opts
            ) do
         {:ok, embeddings} ->
           now = DateTime.utc_now() |> DateTime.truncate(:second)
@@ -158,6 +161,7 @@ defmodule Liteskill.Rag do
               %{
                 id: Ecto.UUID.generate(),
                 content: chunk.content,
+                content_hash: content_hash(chunk.content),
                 position: chunk.position,
                 metadata: Map.get(chunk, :metadata, %{}),
                 token_count: Map.get(chunk, :token_count),
@@ -196,7 +200,8 @@ defmodule Liteskill.Rag do
 
       case CohereClient.embed(
              [query],
-             [{:input_type, "search_query"}, {:dimensions, dimensions}] ++ plug_opts
+             [{:input_type, "search_query"}, {:dimensions, dimensions}, {:user_id, user_id}] ++
+               plug_opts
            ) do
         {:ok, [query_embedding]} ->
           results = vector_search(collection_id, query_embedding, limit)
@@ -211,9 +216,12 @@ defmodule Liteskill.Rag do
   def rerank(query, chunks, opts \\ []) do
     {plug_opts, rest} = Keyword.split(opts, [:plug])
     top_n = Keyword.get(rest, :top_n, 5)
+    user_id = Keyword.get(rest, :user_id)
     texts = Enum.map(chunks, fn %{chunk: c} -> c.content end)
 
-    case CohereClient.rerank(query, texts, [{:top_n, top_n}] ++ plug_opts) do
+    user_opts = if user_id, do: [{:user_id, user_id}], else: []
+
+    case CohereClient.rerank(query, texts, [{:top_n, top_n}] ++ user_opts ++ plug_opts) do
       {:ok, results} ->
         ranked =
           Enum.map(results, fn %{"index" => idx, "relevance_score" => score} ->
@@ -237,7 +245,7 @@ defmodule Liteskill.Rag do
     search_opts = if dimensions, do: [{:dimensions, dimensions} | search_opts], else: search_opts
 
     with {:ok, search_results} <- search(collection_id, query, user_id, search_opts) do
-      case rerank(query, search_results, [{:top_n, top_n}] ++ plug_opts) do
+      case rerank(query, search_results, [{:top_n, top_n}, {:user_id, user_id}] ++ plug_opts) do
         {:ok, _ranked} = ok ->
           ok
 
@@ -255,7 +263,7 @@ defmodule Liteskill.Rag do
 
     case CohereClient.embed(
            [query],
-           [{:input_type, "search_query"}, {:dimensions, 1024}] ++ plug_opts
+           [{:input_type, "search_query"}, {:dimensions, 1024}, {:user_id, user_id}] ++ plug_opts
          ) do
       {:ok, [query_embedding]} ->
         results = vector_search_all(user_id, query_embedding, 100)
@@ -270,7 +278,7 @@ defmodule Liteskill.Rag do
             Enum.zip_with(results, preloaded, fn r, c -> %{r | chunk: c} end)
 
           if length(enriched) >= 40 do
-            case rerank(query, enriched, [{:top_n, 40}] ++ plug_opts) do
+            case rerank(query, enriched, [{:top_n, 40}, {:user_id, user_id}] ++ plug_opts) do
               {:ok, _ranked} = ok -> ok
               {:error, _} -> {:ok, add_nil_scores(Enum.take(enriched, 40))}
             end
@@ -324,6 +332,26 @@ defmodule Liteskill.Rag do
       %Document{} = doc -> {:ok, doc}
       nil -> {:error, :not_found}
     end
+  end
+
+  def get_rag_document_for_source_doc(document_id, user_id) do
+    case Repo.one(
+           from(d in Document,
+             where:
+               fragment("? ->> 'wiki_document_id' = ?", d.metadata, ^document_id) and
+                 d.user_id == ^user_id
+           )
+         ) do
+      %Document{} = doc -> {:ok, doc}
+      nil -> {:error, :not_found}
+    end
+  end
+
+  def list_chunks_for_document(rag_document_id) do
+    Chunk
+    |> where([c], c.document_id == ^rag_document_id)
+    |> order_by([c], asc: c.position)
+    |> Repo.all()
   end
 
   def delete_document_chunks(document_id) do
@@ -403,4 +431,14 @@ defmodule Liteskill.Rag do
     )
     |> Repo.all()
   end
+
+  # coveralls-ignore-next-line
+  defp content_hash(nil), do: nil
+  defp content_hash(content), do: :crypto.hash(:sha256, content) |> Base.encode16(case: :lower)
+
+  defp maybe_hash_content(%{content: content} = attrs) when is_binary(content) do
+    Map.put(attrs, :content_hash, content_hash(content))
+  end
+
+  defp maybe_hash_content(attrs), do: attrs
 end

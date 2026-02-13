@@ -239,4 +239,81 @@ defmodule Liteskill.Rag.CohereClientTest do
       CohereClient.rerank("query", ["doc"], plug: {Req.Test, CohereClient})
     end
   end
+
+  describe "instrumentation" do
+    test "user_id is not sent in HTTP request body for embed" do
+      Req.Test.stub(CohereClient, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        decoded = Jason.decode!(body)
+        refute Map.has_key?(decoded, "user_id")
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(
+          200,
+          Jason.encode!(%{"embeddings" => %{"float" => [[0.1]]}})
+        )
+      end)
+
+      # Pass user_id but it should NOT appear in the HTTP request
+      assert {:ok, _} =
+               CohereClient.embed(["test"],
+                 input_type: "search_document",
+                 user_id: "some-user-id",
+                 plug: {Req.Test, CohereClient}
+               )
+    end
+
+    test "user_id is not sent in HTTP request body for rerank" do
+      Req.Test.stub(CohereClient, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        decoded = Jason.decode!(body)
+        refute Map.has_key?(decoded, "user_id")
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(
+          200,
+          Jason.encode!(%{"results" => []})
+        )
+      end)
+
+      assert {:ok, _} =
+               CohereClient.rerank("query", ["doc"],
+                 user_id: "some-user-id",
+                 plug: {Req.Test, CohereClient}
+               )
+    end
+
+    test "embed still works without user_id" do
+      Req.Test.stub(CohereClient, fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(
+          200,
+          Jason.encode!(%{"embeddings" => %{"float" => [[0.1]]}})
+        )
+      end)
+
+      assert {:ok, [[0.1]]} =
+               CohereClient.embed(["test"],
+                 input_type: "search_document",
+                 plug: {Req.Test, CohereClient}
+               )
+    end
+
+    test "rerank still works without user_id" do
+      Req.Test.stub(CohereClient, fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(
+          200,
+          Jason.encode!(%{"results" => [%{"index" => 0, "relevance_score" => 0.9}]})
+        )
+      end)
+
+      assert {:ok, [%{"index" => 0, "relevance_score" => 0.9}]} =
+               CohereClient.rerank("query", ["doc"], plug: {Req.Test, CohereClient})
+    end
+  end
 end

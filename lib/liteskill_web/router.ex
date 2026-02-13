@@ -66,7 +66,9 @@ defmodule LiteskillWeb.Router do
       live "/wiki", ChatLive, :wiki
       live "/wiki/:document_id", ChatLive, :wiki_page_show
       live "/sources", ChatLive, :sources
+      live "/sources/pipeline", ChatLive, :pipeline
       live "/sources/:source_id", ChatLive, :source_show
+      live "/sources/:source_id/:document_id", ChatLive, :source_document_show
       live "/mcp", ChatLive, :mcp_servers
       live "/reports", ChatLive, :reports
       live "/reports/:report_id", ChatLive, :report_show

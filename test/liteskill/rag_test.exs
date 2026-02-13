@@ -1031,4 +1031,152 @@ defmodule Liteskill.RagTest do
       assert "chunk from B" in contents
     end
   end
+
+  # --- SHA256 Hashing ---
+
+  describe "SHA256 content hashing" do
+    test "create_document sets content_hash when content is provided", %{owner: owner} do
+      {:ok, coll} = create_collection(owner.id)
+      {:ok, source} = create_source(coll.id, owner.id)
+
+      {:ok, doc} =
+        create_document(source.id, owner.id, %{content: "hello world"})
+
+      expected_hash =
+        :crypto.hash(:sha256, "hello world") |> Base.encode16(case: :lower)
+
+      assert doc.content_hash == expected_hash
+    end
+
+    test "create_document leaves content_hash nil when no content", %{owner: owner} do
+      {:ok, coll} = create_collection(owner.id)
+      {:ok, source} = create_source(coll.id, owner.id)
+
+      {:ok, doc} = create_document(source.id, owner.id)
+      assert doc.content_hash == nil
+    end
+
+    test "embed_chunks sets content_hash on chunks", %{owner: owner} do
+      {:ok, coll} = create_collection(owner.id)
+      {:ok, source} = create_source(coll.id, owner.id)
+      {:ok, doc} = create_document(source.id, owner.id)
+
+      stub_embed([List.duplicate(0.1, 1024)])
+      chunks = [%{content: "chunk content", position: 0}]
+
+      assert {:ok, _} =
+               Rag.embed_chunks(doc.id, chunks, owner.id, plug: {Req.Test, CohereClient})
+
+      db_chunks = Chunk |> where([c], c.document_id == ^doc.id) |> Repo.all()
+      assert length(db_chunks) == 1
+
+      expected_hash =
+        :crypto.hash(:sha256, "chunk content") |> Base.encode16(case: :lower)
+
+      assert hd(db_chunks).content_hash == expected_hash
+    end
+  end
+
+  # --- Embedding Request Logging ---
+
+  describe "embedding request logging" do
+    test "embed_chunks logs embedding request when user_id provided", %{owner: owner} do
+      {:ok, coll} = create_collection(owner.id)
+      {:ok, source} = create_source(coll.id, owner.id)
+      {:ok, doc} = create_document(source.id, owner.id)
+
+      stub_embed([List.duplicate(0.1, 1024)])
+      chunks = [%{content: "logged chunk", position: 0}]
+
+      assert {:ok, _} =
+               Rag.embed_chunks(doc.id, chunks, owner.id, plug: {Req.Test, CohereClient})
+
+      alias Liteskill.Rag.EmbeddingRequest
+
+      requests =
+        EmbeddingRequest
+        |> where([e], e.user_id == ^owner.id)
+        |> Repo.all()
+
+      assert length(requests) >= 1
+
+      embed_req = Enum.find(requests, &(&1.request_type == "embed"))
+      assert embed_req != nil
+      assert embed_req.status == "success"
+      assert embed_req.model_id == "us.cohere.embed-v4:0"
+      assert embed_req.input_count == 1
+      assert embed_req.latency_ms >= 0
+    end
+  end
+
+  # --- Source Document Lookup ---
+
+  describe "get_rag_document_for_source_doc/2" do
+    test "finds RAG document linked via wiki_document_id metadata", %{owner: owner} do
+      {:ok, coll} = create_collection(owner.id)
+      {:ok, source} = create_source(coll.id, owner.id)
+      wiki_doc_id = Ecto.UUID.generate()
+
+      {:ok, rag_doc} =
+        create_document(source.id, owner.id, %{
+          title: "Wiki Doc",
+          metadata: %{"wiki_document_id" => wiki_doc_id}
+        })
+
+      assert {:ok, found} = Rag.get_rag_document_for_source_doc(wiki_doc_id, owner.id)
+      assert found.id == rag_doc.id
+    end
+
+    test "returns :not_found when no matching RAG document", %{owner: owner} do
+      assert {:error, :not_found} =
+               Rag.get_rag_document_for_source_doc(Ecto.UUID.generate(), owner.id)
+    end
+
+    test "returns :not_found for another user's RAG document", %{owner: owner, other: other} do
+      {:ok, coll} = create_collection(other.id)
+      {:ok, source} = create_source(coll.id, other.id)
+      wiki_doc_id = Ecto.UUID.generate()
+
+      {:ok, _} =
+        create_document(source.id, other.id, %{
+          title: "Other Doc",
+          metadata: %{"wiki_document_id" => wiki_doc_id}
+        })
+
+      assert {:error, :not_found} = Rag.get_rag_document_for_source_doc(wiki_doc_id, owner.id)
+    end
+  end
+
+  describe "list_chunks_for_document/1" do
+    test "returns chunks ordered by position", %{owner: owner} do
+      {:ok, coll} = create_collection(owner.id)
+      {:ok, source} = create_source(coll.id, owner.id)
+      {:ok, doc} = create_document(source.id, owner.id, %{title: "Chunked"})
+
+      for pos <- [2, 0, 1] do
+        %Chunk{}
+        |> Chunk.changeset(%{
+          content: "Chunk #{pos}",
+          position: pos,
+          document_id: doc.id,
+          token_count: 10 + pos,
+          content_hash: "hash_#{pos}"
+        })
+        |> Liteskill.Repo.insert!()
+      end
+
+      chunks = Rag.list_chunks_for_document(doc.id)
+      assert length(chunks) == 3
+      assert Enum.map(chunks, & &1.position) == [0, 1, 2]
+      assert Enum.map(chunks, & &1.content_hash) == ["hash_0", "hash_1", "hash_2"]
+    end
+
+    test "returns empty list when no chunks", %{owner: owner} do
+      {:ok, coll} = create_collection(owner.id)
+      {:ok, source} = create_source(coll.id, owner.id)
+      {:ok, doc} = create_document(source.id, owner.id, %{title: "Empty"})
+
+      assert Rag.list_chunks_for_document(doc.id) == []
+    end
+  end
 end

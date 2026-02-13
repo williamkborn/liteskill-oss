@@ -22,6 +22,8 @@
     "lib/liteskill_web/live/mcp_components.ex",
     "lib/liteskill_web/live/sources_components.ex",
     "lib/liteskill_web/live/reports_live.ex",
+    "lib/liteskill_web/live/pipeline_live.ex",
+    "lib/liteskill_web/live/pipeline_components.ex",
     "lib/liteskill_web/live/wiki_live.ex",
     "lib/liteskill_web/live/setup_live.ex",
     "lib/liteskill_web/live/profile_live.ex",
@@ -31,6 +33,8 @@
     "lib/liteskill/repo.ex",
     "lib/liteskill.ex",
     "lib/liteskill/application.ex",
+    "lib/liteskill/release.ex",
+    "lib/liteskill/crypto/encrypted_map.ex",
     "test/support/",
     "deps/"
   ]

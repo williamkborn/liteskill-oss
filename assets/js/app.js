@@ -132,6 +132,46 @@ const Hooks = {
     }
   },
 
+  PipelineChart: {
+    mounted() {
+      const COLORS = [
+        "#6366f1", "#f59e0b", "#10b981", "#ef4444", "#3b82f6",
+        "#8b5cf6", "#ec4899", "#14b8a6", "#f97316", "#06b6d4"
+      ]
+      import("https://cdn.jsdelivr.net/npm/chart.js@4/+esm").then((mod) => {
+        const { Chart, ArcElement, PieController, Tooltip, Legend } = mod
+        Chart.register(ArcElement, PieController, Tooltip, Legend)
+        const data = JSON.parse(this.el.dataset.chart || "[]")
+        const canvas = this.el.querySelector("canvas")
+        this.chart = new Chart(canvas, {
+          type: "pie",
+          data: {
+            labels: data.map(d => d.source_name),
+            datasets: [{
+              data: data.map(d => d.chunk_count),
+              backgroundColor: data.map((_, i) => COLORS[i % COLORS.length])
+            }]
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: { position: "bottom", labels: { boxWidth: 12, padding: 8 } }
+            }
+          }
+        })
+      })
+      this.handleEvent("pipeline_chart_update", ({data}) => {
+        if (!this.chart) return
+        const parsed = typeof data === "string" ? JSON.parse(data) : data
+        this.chart.data.labels = parsed.map(d => d.source_name)
+        this.chart.data.datasets[0].data = parsed.map(d => d.chunk_count)
+        this.chart.data.datasets[0].backgroundColor = parsed.map((_, i) => COLORS[i % COLORS.length])
+        this.chart.update()
+      })
+    },
+    destroyed() { if (this.chart) this.chart.destroy() }
+  },
+
   TextareaAutoResize: {
     mounted() {
       this.el.addEventListener("input", () => this.resize())

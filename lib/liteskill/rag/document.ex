@@ -15,6 +15,7 @@ defmodule Liteskill.Rag.Document do
     field :metadata, :map, default: %{}
     field :chunk_count, :integer, default: 0
     field :status, :string, default: "pending"
+    field :content_hash, :string
 
     belongs_to :source, Liteskill.Rag.Source
     belongs_to :user, Liteskill.Accounts.User
@@ -25,7 +26,16 @@ defmodule Liteskill.Rag.Document do
 
   def changeset(document, attrs) do
     document
-    |> cast(attrs, [:title, :content, :metadata, :chunk_count, :status, :source_id, :user_id])
+    |> cast(attrs, [
+      :title,
+      :content,
+      :metadata,
+      :chunk_count,
+      :status,
+      :content_hash,
+      :source_id,
+      :user_id
+    ])
     |> validate_required([:title, :source_id, :user_id])
     |> validate_inclusion(:status, ["pending", "embedded", "error"])
     |> foreign_key_constraint(:source_id)

@@ -14,6 +14,7 @@ defmodule Liteskill.Rag.Chunk do
     field :position, :integer
     field :metadata, :map, default: %{}
     field :token_count, :integer
+    field :content_hash, :string
     field :embedding, Pgvector.Ecto.Vector
 
     belongs_to :document, Liteskill.Rag.Document
@@ -23,7 +24,15 @@ defmodule Liteskill.Rag.Chunk do
 
   def changeset(chunk, attrs) do
     chunk
-    |> cast(attrs, [:content, :position, :metadata, :token_count, :embedding, :document_id])
+    |> cast(attrs, [
+      :content,
+      :position,
+      :metadata,
+      :token_count,
+      :content_hash,
+      :embedding,
+      :document_id
+    ])
     |> validate_required([:content, :position, :document_id])
     |> foreign_key_constraint(:document_id)
   end
