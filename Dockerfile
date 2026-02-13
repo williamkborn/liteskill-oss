@@ -29,7 +29,7 @@ RUN mix local.hex --force && mix local.rebar --force
 ENV MIX_ENV="prod"
 
 # Install mix dependencies
-COPY mix.exs mix.lock ./
+COPY mix.exs mix.lock VERSION ./
 RUN --mount=type=cache,target=/root/.hex \
     --mount=type=cache,target=/root/.mix \
     mix deps.get --only prod

@@ -1,0 +1,54 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: liteskill
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://liteskill-ai.github.io/liteskill-oss/
+    chart: liteskill
+    targetRevision: 0.1.3
+    helm:
+      releaseName: liteskill
+      valuesObject:
+        config:
+          phxHost: liteskill.example.com
+
+        ingress:
+          enabled: true
+          className: nginx
+          hosts:
+            - host: liteskill.example.com
+              paths:
+                - path: /
+                  pathType: Prefix
+          tls:
+            - secretName: liteskill-tls
+              hosts:
+                - liteskill.example.com
+
+        secrets:
+          existingSecret: liteskill-secrets
+
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            memory: 1Gi
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: liteskill
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
