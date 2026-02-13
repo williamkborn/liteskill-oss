@@ -41,7 +41,7 @@ defmodule LiteskillWeb.SourcesComponents do
           class="block w-full text-left"
         >
           <div class="card bg-warning/10 border-2 border-warning shadow-sm hover:border-warning hover:shadow-md transition-all cursor-pointer">
-            <div class="card-body p-4">
+            <div class="card-body p-4 h-[120px]">
               <div class="flex items-start justify-between gap-2">
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2">
@@ -67,20 +67,22 @@ defmodule LiteskillWeb.SourcesComponents do
             </div>
           </div>
         </button>
-        <button
-          :if={@can_delete?}
-          phx-click="confirm_delete_source"
-          phx-value-id={@source.id}
-          class="absolute bottom-2 right-2 btn btn-ghost btn-xs opacity-0 group-hover:opacity-100 text-base-content/40 hover:text-error transition-opacity z-10"
-        >
-          <.icon name="hero-trash-micro" class="size-3.5" />
-        </button>
+        <div class="absolute bottom-2 right-2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+          <button
+            :if={@can_delete?}
+            phx-click="confirm_delete_source"
+            phx-value-id={@source.id}
+            class="btn btn-ghost btn-xs text-base-content/40 hover:text-error"
+          >
+            <.icon name="hero-trash-micro" class="size-3.5" />
+          </button>
+        </div>
       </div>
     <% else %>
       <div class="relative group">
         <.link navigate={~p"/sources/#{source_url_id(@source)}"} class="block">
           <div class="card bg-base-100 border border-base-300 shadow-sm hover:border-primary/50 hover:shadow-md transition-all cursor-pointer">
-            <div class="card-body p-4">
+            <div class="card-body p-4 h-[120px]">
               <div class="flex items-start justify-between gap-2">
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2">
@@ -106,14 +108,24 @@ defmodule LiteskillWeb.SourcesComponents do
             </div>
           </div>
         </.link>
-        <button
-          :if={@can_delete?}
-          phx-click="confirm_delete_source"
-          phx-value-id={@source.id}
-          class="absolute bottom-2 right-2 btn btn-ghost btn-xs opacity-0 group-hover:opacity-100 text-base-content/40 hover:text-error transition-opacity z-10"
-        >
-          <.icon name="hero-trash-micro" class="size-3.5" />
-        </button>
+        <div class="absolute bottom-2 right-2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+          <button
+            :if={!@builtin?}
+            phx-click="open_configure_source"
+            phx-value-source-id={@source.id}
+            class="btn btn-ghost btn-xs text-base-content/40 hover:text-primary"
+          >
+            <.icon name="hero-cog-6-tooth-micro" class="size-3.5" />
+          </button>
+          <button
+            :if={@can_delete?}
+            phx-click="confirm_delete_source"
+            phx-value-id={@source.id}
+            class="btn btn-ghost btn-xs text-base-content/40 hover:text-error"
+          >
+            <.icon name="hero-trash-micro" class="size-3.5" />
+          </button>
+        </div>
       </div>
     <% end %>
     """
@@ -382,7 +394,7 @@ defmodule LiteskillWeb.SourcesComponents do
     ~H"""
     <button phx-click="open_add_source" class="block w-full text-left">
       <div class="card bg-base-100 border-2 border-dashed border-base-300 shadow-sm hover:border-primary/50 hover:shadow-md transition-all cursor-pointer">
-        <div class="card-body p-4 flex flex-col items-center justify-center min-h-[100px]">
+        <div class="card-body p-4 flex flex-col items-center justify-center h-[120px]">
           <.icon name="hero-plus-micro" class="size-8 text-base-content/30" />
           <span class="text-sm text-base-content/50 mt-1">Add Data Source</span>
         </div>

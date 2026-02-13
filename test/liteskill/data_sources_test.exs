@@ -913,4 +913,88 @@ defmodule Liteskill.DataSourcesTest do
                DataSources.export_report_to_wiki(report.id, owner.id)
     end
   end
+
+  # --- Upsert / Delete by External ID ---
+
+  describe "upsert_document_by_external_id/4" do
+    test "creates document when none exists", %{owner: owner} do
+      {:ok, source} =
+        DataSources.create_source(%{name: "upsert-test", source_type: "wiki"}, owner.id)
+
+      attrs = %{title: "New Doc", content: "hello"}
+
+      assert {:ok, :created, doc} =
+               DataSources.upsert_document_by_external_id(
+                 source.id,
+                 "ext-1",
+                 attrs,
+                 owner.id
+               )
+
+      assert doc.title == "New Doc"
+      assert doc.external_id == "ext-1"
+    end
+
+    test "returns unchanged when content_hash matches", %{owner: owner} do
+      {:ok, source} =
+        DataSources.create_source(%{name: "upsert-unchanged", source_type: "wiki"}, owner.id)
+
+      attrs = %{title: "Doc", content: "same content"}
+
+      {:ok, :created, _} =
+        DataSources.upsert_document_by_external_id(source.id, "ext-2", attrs, owner.id)
+
+      assert {:ok, :unchanged, _} =
+               DataSources.upsert_document_by_external_id(source.id, "ext-2", attrs, owner.id)
+    end
+
+    test "updates document when content changes", %{owner: owner} do
+      {:ok, source} =
+        DataSources.create_source(%{name: "upsert-update", source_type: "wiki"}, owner.id)
+
+      {:ok, :created, _} =
+        DataSources.upsert_document_by_external_id(
+          source.id,
+          "ext-3",
+          %{title: "Doc", content: "v1"},
+          owner.id
+        )
+
+      assert {:ok, :updated, doc} =
+               DataSources.upsert_document_by_external_id(
+                 source.id,
+                 "ext-3",
+                 %{title: "Doc", content: "v2"},
+                 owner.id
+               )
+
+      assert doc.content == "v2"
+    end
+  end
+
+  describe "delete_document_by_external_id/3" do
+    test "deletes existing document", %{owner: owner} do
+      {:ok, source} =
+        DataSources.create_source(%{name: "del-test", source_type: "wiki"}, owner.id)
+
+      {:ok, :created, _} =
+        DataSources.upsert_document_by_external_id(
+          source.id,
+          "ext-del",
+          %{title: "To Delete", content: "bye"},
+          owner.id
+        )
+
+      assert {:ok, _} =
+               DataSources.delete_document_by_external_id(source.id, "ext-del", owner.id)
+    end
+
+    test "returns not_found for missing document", %{owner: owner} do
+      {:ok, source} =
+        DataSources.create_source(%{name: "del-noop", source_type: "wiki"}, owner.id)
+
+      assert {:ok, :not_found} =
+               DataSources.delete_document_by_external_id(source.id, "nope", owner.id)
+    end
+  end
 end

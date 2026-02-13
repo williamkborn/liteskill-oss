@@ -12,6 +12,8 @@ defmodule Liteskill.DataSources.Document do
     field :metadata, :map, default: %{}
     field :source_ref, :string
     field :slug, :string
+    field :external_id, :string
+    field :content_hash, :string
 
     belongs_to :user, Liteskill.Accounts.User
     belongs_to :parent_document, __MODULE__
@@ -30,6 +32,8 @@ defmodule Liteskill.DataSources.Document do
       :metadata,
       :source_ref,
       :slug,
+      :external_id,
+      :content_hash,
       :user_id,
       :parent_document_id,
       :position

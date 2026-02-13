@@ -6,7 +6,7 @@ defmodule Liteskill.DataSources do
   (defined in code, like Wiki). Documents are always in the DB.
   """
 
-  alias Liteskill.DataSources.{Source, Document}
+  alias Liteskill.DataSources.{Source, Document, SyncWorker}
   alias Liteskill.Repo
 
   import Ecto.Query
@@ -423,4 +423,104 @@ defmodule Liteskill.DataSources do
       end
     end
   end
+
+  # --- Sync Pipeline ---
+
+  def start_sync(source_id, user_id) do
+    SyncWorker.new(%{"source_id" => source_id, "user_id" => user_id})
+    |> Oban.insert()
+  end
+
+  def get_document_by_external_id(source_ref, external_id) do
+    case Repo.one(
+           from(d in Document,
+             where: d.source_ref == ^source_ref and d.external_id == ^external_id
+           )
+         ) do
+      nil ->
+        # Fallback: for connectors that use doc.id as external_id (e.g. wiki)
+        case Ecto.UUID.cast(external_id) do
+          {:ok, uuid} ->
+            Repo.one(
+              from(d in Document,
+                where: d.source_ref == ^source_ref and d.id == ^uuid
+              )
+            )
+
+          # coveralls-ignore-next-line
+          :error ->
+            nil
+        end
+
+      doc ->
+        doc
+    end
+  end
+
+  def upsert_document_by_external_id(source_ref, external_id, attrs, user_id) do
+    case get_document_by_external_id(source_ref, external_id) do
+      nil ->
+        attrs =
+          attrs
+          |> Map.put(:external_id, external_id)
+          |> Map.put(:content_hash, content_hash(attrs[:content]))
+
+        case create_document(source_ref, attrs, user_id) do
+          {:ok, doc} -> {:ok, :created, doc}
+          # coveralls-ignore-next-line
+          {:error, reason} -> {:error, reason}
+        end
+
+      %Document{} = existing ->
+        new_hash = content_hash(attrs[:content])
+
+        if existing.content_hash == new_hash do
+          {:ok, :unchanged, existing}
+        else
+          update_attrs =
+            attrs
+            |> Map.put(:content_hash, new_hash)
+            |> Map.put(:external_id, external_id)
+
+          case update_document(existing.id, update_attrs, user_id) do
+            {:ok, doc} -> {:ok, :updated, doc}
+            # coveralls-ignore-next-line
+            {:error, reason} -> {:error, reason}
+          end
+        end
+    end
+  end
+
+  def delete_document_by_external_id(source_ref, external_id, user_id) do
+    case get_document_by_external_id(source_ref, external_id) do
+      nil -> {:ok, :not_found}
+      doc -> delete_document(doc.id, user_id)
+    end
+  end
+
+  def update_sync_status(source, status, error \\ nil) do
+    error = if error, do: String.slice(to_string(error), 0, 10_000)
+    attrs = %{sync_status: status, last_sync_error: error}
+
+    attrs =
+      if status == "complete" do
+        Map.put(attrs, :last_synced_at, DateTime.utc_now() |> DateTime.truncate(:second))
+      else
+        attrs
+      end
+
+    source
+    |> Source.sync_changeset(attrs)
+    |> Repo.update()
+  end
+
+  def update_sync_cursor(source, cursor, document_count) do
+    source
+    |> Source.sync_changeset(%{sync_cursor: cursor || %{}, sync_document_count: document_count})
+    |> Repo.update()
+  end
+
+  # coveralls-ignore-next-line
+  defp content_hash(nil), do: nil
+  defp content_hash(content), do: :crypto.hash(:sha256, content) |> Base.encode16(case: :lower)
 end

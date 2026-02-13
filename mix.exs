@@ -79,6 +79,7 @@ defmodule Liteskill.MixProject do
       {:ueberauth_oidcc, "~> 0.4"},
       {:oidcc, "~> 3.0"},
       {:argon2_elixir, "~> 4.1"},
+      {:jose, "~> 1.11"},
       {:excoveralls, "~> 0.18", only: :test},
       {:tidewave, "~> 0.5", only: :dev}
     ]

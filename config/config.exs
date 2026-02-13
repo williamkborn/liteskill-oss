@@ -75,7 +75,7 @@ config :phoenix, :json_library, Jason
 
 config :liteskill, Oban,
   repo: Liteskill.Repo,
-  queues: [default: 10, rag_ingest: 5]
+  queues: [default: 10, rag_ingest: 5, data_sync: 3]
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.

@@ -636,6 +636,43 @@ defmodule LiteskillWeb.ChatLive do
                   built-in
                 </span>
               </div>
+              <div
+                :if={!Map.get(@current_source, :builtin, false)}
+                class="flex items-center gap-2"
+              >
+                <span
+                  :if={@current_source.sync_status == "syncing"}
+                  class="badge badge-sm badge-info gap-1"
+                >
+                  <span class="loading loading-spinner loading-xs"></span> syncing
+                </span>
+                <span
+                  :if={@current_source.sync_status == "complete"}
+                  class="badge badge-sm badge-success"
+                >
+                  synced
+                </span>
+                <span
+                  :if={@current_source.sync_status == "error"}
+                  class="badge badge-sm badge-error"
+                  title={@current_source.last_sync_error}
+                >
+                  error
+                </span>
+                <span
+                  :if={@current_source.last_synced_at}
+                  class="text-xs text-base-content/50"
+                >
+                  {Calendar.strftime(@current_source.last_synced_at, "%b %d, %H:%M")}
+                </span>
+                <button
+                  phx-click="sync_source"
+                  class="btn btn-primary btn-sm gap-1"
+                  disabled={@current_source.sync_status == "syncing"}
+                >
+                  <.icon name="hero-arrow-path-micro" class="size-4" /> Sync
+                </button>
+              </div>
             </div>
           </header>
 
@@ -1796,6 +1833,19 @@ defmodule LiteskillWeb.ChatLive do
       end
 
     case result do
+      {:ok, updated} when not is_atom(updated) ->
+        maybe_populate_description(updated, user_id)
+        sources = Liteskill.DataSources.list_sources_with_counts(user_id)
+
+        {:noreply,
+         assign(socket,
+           show_configure_source: false,
+           configure_source: nil,
+           configure_source_fields: [],
+           configure_source_form: to_form(%{}, as: :config),
+           data_sources: sources
+         )}
+
       {:ok, _} ->
         sources = Liteskill.DataSources.list_sources_with_counts(user_id)
 
@@ -1880,6 +1930,25 @@ defmodule LiteskillWeb.ChatLive do
          socket
          |> assign(confirm_delete_source_id: nil)
          |> put_flash(:error, "Failed to delete data source.")}
+    end
+  end
+
+  @impl true
+  def handle_event("sync_source", _params, socket) do
+    source = socket.assigns.current_source
+    user_id = socket.assigns.current_user.id
+
+    case Liteskill.DataSources.start_sync(source.id, user_id) do
+      {:ok, _} ->
+        {:ok, updated} = Liteskill.DataSources.get_source(source.id, user_id)
+
+        {:noreply,
+         socket
+         |> assign(current_source: updated)
+         |> put_flash(:info, "Sync started.")}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Failed to start sync.")}
     end
   end
 
@@ -3209,6 +3278,24 @@ defmodule LiteskillWeb.ChatLive do
   defp truncate_hash(nil), do: "-"
   defp truncate_hash(hash) when byte_size(hash) > 12, do: String.slice(hash, 0, 12) <> "..."
   defp truncate_hash(hash), do: hash
+
+  defp maybe_populate_description(source, user_id) do
+    case source.source_type do
+      "google_drive" ->
+        alias Liteskill.DataSources.Connectors.GoogleDrive
+
+        case GoogleDrive.describe_folder(source, []) do
+          {:ok, description} ->
+            Liteskill.DataSources.update_source(source.id, %{description: description}, user_id)
+
+          _ ->
+            :ok
+        end
+
+      _ ->
+        :ok
+    end
+  end
 
   defp maybe_unsubscribe(socket) do
     case socket.assigns[:conversation] do

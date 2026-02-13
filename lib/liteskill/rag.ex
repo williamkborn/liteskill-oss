@@ -338,7 +338,8 @@ defmodule Liteskill.Rag do
     case Repo.one(
            from(d in Document,
              where:
-               fragment("? ->> 'wiki_document_id' = ?", d.metadata, ^document_id) and
+               (fragment("? ->> 'wiki_document_id' = ?", d.metadata, ^document_id) or
+                  fragment("? ->> 'source_document_id' = ?", d.metadata, ^document_id)) and
                  d.user_id == ^user_id
            )
          ) do
@@ -360,6 +361,45 @@ defmodule Liteskill.Rag do
       |> Repo.delete_all()
 
     {:ok, count}
+  end
+
+  # --- Generic Sync Helpers ---
+
+  def find_or_create_collection_for_source(source_name, user_id) do
+    case Repo.one(
+           from(c in Collection,
+             where: c.name == ^source_name and c.user_id == ^user_id
+           )
+         ) do
+      %Collection{} = coll -> {:ok, coll}
+      nil -> create_collection(%{name: source_name}, user_id)
+    end
+  end
+
+  def find_or_create_rag_source_for_source(collection_id, source_name, user_id) do
+    case Repo.one(
+           from(s in Source,
+             where:
+               s.name == ^source_name and s.collection_id == ^collection_id and
+                 s.user_id == ^user_id
+           )
+         ) do
+      %Source{} = source -> {:ok, source}
+      nil -> create_source(collection_id, %{name: source_name, source_type: "manual"}, user_id)
+    end
+  end
+
+  def find_rag_document_by_source_doc_id(source_document_id, user_id) do
+    case Repo.one(
+           from(d in Document,
+             where:
+               fragment("? ->> 'source_document_id' = ?", d.metadata, ^source_document_id) and
+                 d.user_id == ^user_id
+           )
+         ) do
+      %Document{} = doc -> {:ok, doc}
+      nil -> {:error, :not_found}
+    end
   end
 
   # --- Ingest ---
