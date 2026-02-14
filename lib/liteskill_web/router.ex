@@ -64,6 +64,8 @@ defmodule LiteskillWeb.Router do
       live "/profile/admin/servers", ChatLive, :admin_servers
       live "/profile/admin/users", ChatLive, :admin_users
       live "/profile/admin/groups", ChatLive, :admin_groups
+      live "/profile/admin/providers", ChatLive, :admin_providers
+      live "/profile/admin/models", ChatLive, :admin_models
       live "/wiki", ChatLive, :wiki
       live "/wiki/:document_id", ChatLive, :wiki_page_show
       live "/sources", ChatLive, :sources

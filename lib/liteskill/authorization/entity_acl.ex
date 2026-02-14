@@ -23,7 +23,15 @@ defmodule Liteskill.Authorization.EntityAcl do
     timestamps(type: :utc_datetime)
   end
 
-  @valid_entity_types ["conversation", "report", "source", "mcp_server", "wiki_space"]
+  @valid_entity_types [
+    "conversation",
+    "report",
+    "source",
+    "mcp_server",
+    "wiki_space",
+    "llm_model",
+    "llm_provider"
+  ]
   @valid_roles ["owner", "manager", "editor", "viewer"]
 
   def changeset(acl, attrs) do

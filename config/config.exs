@@ -60,10 +60,8 @@ config :ueberauth, Ueberauth,
     oidc: {Ueberauth.Strategy.OIDCC, []}
   ]
 
-# Configure LLM defaults (uses ReqLLM for transport)
-config :liteskill, Liteskill.LLM,
-  bedrock_region: "us-east-1",
-  bedrock_model_id: "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
+# Configure LLM defaults (region/token used by CohereClient for RAG embeddings)
+config :liteskill, Liteskill.LLM, bedrock_region: "us-east-1"
 
 # Configure Elixir's Logger
 config :logger, :default_formatter,

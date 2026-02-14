@@ -8,7 +8,6 @@ defmodule Liteskill.LLM.StreamHandlerTest do
   setup do
     Application.put_env(:liteskill, Liteskill.LLM,
       bedrock_region: "us-east-1",
-      bedrock_model_id: "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
       bedrock_bearer_token: "test-token"
     )
 
@@ -79,6 +78,7 @@ defmodule Liteskill.LLM.StreamHandlerTest do
 
     assert :ok =
              StreamHandler.handle_stream(stream_id, [%{role: :user, content: "test"}],
+               model_id: "test-model",
                stream_fn: text_stream_fn("Hello!")
              )
 
@@ -93,6 +93,7 @@ defmodule Liteskill.LLM.StreamHandlerTest do
 
     assert {:error, {"request_error", _}} =
              StreamHandler.handle_stream(stream_id, [%{role: :user, content: "test"}],
+               model_id: "test-model",
                stream_fn: error_stream_fn(%{body: "connection failed"})
              )
 
@@ -107,7 +108,45 @@ defmodule Liteskill.LLM.StreamHandlerTest do
     {:ok, _} = Chat.archive_conversation(conv.id, user.id)
 
     assert {:error, :conversation_archived} =
-             StreamHandler.handle_stream(conv.stream_id, [%{role: :user, content: "test"}])
+             StreamHandler.handle_stream(conv.stream_id, [%{role: :user, content: "test"}],
+               model_id: "test-model"
+             )
+  end
+
+  test "raises when no model specified", %{conversation: conv} do
+    assert_raise RuntimeError, ~r/No model specified/, fn ->
+      StreamHandler.handle_stream(conv.stream_id, [%{role: :user, content: "test"}],
+        stream_fn: text_stream_fn("")
+      )
+    end
+  end
+
+  test "uses llm_model for model_id and provider options", %{conversation: conv} do
+    llm_model = %Liteskill.LlmModels.LlmModel{
+      model_id: "claude-custom",
+      provider: %Liteskill.LlmProviders.LlmProvider{
+        provider_type: "anthropic",
+        api_key: "test-key",
+        provider_config: %{}
+      }
+    }
+
+    stream_id = conv.stream_id
+
+    assert :ok =
+             StreamHandler.handle_stream(stream_id, [%{role: :user, content: "test"}],
+               llm_model: llm_model,
+               stream_fn: fn _model_id, _msgs, _cb, opts ->
+                 provider_opts = Keyword.get(opts, :provider_options, [])
+                 assert Keyword.get(provider_opts, :api_key) == "test-key"
+                 {:ok, "", []}
+               end
+             )
+
+    events = Store.read_stream_forward(stream_id)
+    started_events = Enum.filter(events, &(&1.event_type == "AssistantStreamStarted"))
+    last_started = List.last(started_events)
+    assert last_started.data["model_id"] == "claude-custom"
   end
 
   test "passes model_id option", %{conversation: conv} do
@@ -129,6 +168,7 @@ defmodule Liteskill.LLM.StreamHandlerTest do
 
     assert :ok =
              StreamHandler.handle_stream(stream_id, [%{role: :user, content: "test"}],
+               model_id: "test-model",
                system: "Be brief",
                stream_fn: fn _model, _msgs, _cb, opts ->
                  assert Keyword.get(opts, :system_prompt) == "Be brief"
@@ -142,6 +182,7 @@ defmodule Liteskill.LLM.StreamHandlerTest do
 
     assert :ok =
              StreamHandler.handle_stream(stream_id, [%{role: :user, content: "test"}],
+               model_id: "test-model",
                temperature: 0.7,
                max_tokens: 2048,
                stream_fn: fn _model, _msgs, _cb, opts ->
@@ -157,6 +198,7 @@ defmodule Liteskill.LLM.StreamHandlerTest do
 
     assert :ok =
              StreamHandler.handle_stream(stream_id, [%{role: :user, content: "test"}],
+               model_id: "test-model",
                tools: [],
                stream_fn: fn _model, _msgs, _cb, opts ->
                  assert Keyword.get(opts, :tools) == nil
@@ -170,6 +212,7 @@ defmodule Liteskill.LLM.StreamHandlerTest do
 
     assert :ok =
              StreamHandler.handle_stream(stream_id, [%{role: :user, content: "test"}],
+               model_id: "test-model",
                stream_fn: text_stream_fn("response text")
              )
 
@@ -198,6 +241,7 @@ defmodule Liteskill.LLM.StreamHandlerTest do
 
     assert :ok =
              StreamHandler.handle_stream(stream_id, [%{role: :user, content: "test"}],
+               model_id: "test-model",
                stream_fn: retry_fn,
                backoff_ms: 1
              )
@@ -214,6 +258,7 @@ defmodule Liteskill.LLM.StreamHandlerTest do
 
     assert {:error, {"max_retries_exceeded", _}} =
              StreamHandler.handle_stream(stream_id, [%{role: :user, content: "test"}],
+               model_id: "test-model",
                stream_fn: error_stream_fn(%{status: 429, body: "rate limited"}),
                backoff_ms: 1
              )
@@ -241,6 +286,7 @@ defmodule Liteskill.LLM.StreamHandlerTest do
 
     assert :ok =
              StreamHandler.handle_stream(stream_id, [%{role: :user, content: "test"}],
+               model_id: "test-model",
                tools: tools,
                stream_fn: fn _model, _msgs, _cb, opts ->
                  req_tools = Keyword.get(opts, :tools, [])
@@ -257,6 +303,7 @@ defmodule Liteskill.LLM.StreamHandlerTest do
 
     assert {:error, :max_tool_rounds_exceeded} =
              StreamHandler.handle_stream(stream_id, [%{role: :user, content: "test"}],
+               model_id: "test-model",
                tool_round: 10,
                max_tool_rounds: 10
              )
@@ -267,6 +314,7 @@ defmodule Liteskill.LLM.StreamHandlerTest do
 
     assert :ok =
              StreamHandler.handle_stream(stream_id, [%{role: :user, content: "test"}],
+               model_id: "test-model",
                tool_round: 5,
                max_tool_rounds: 10,
                stream_fn: text_stream_fn("")
@@ -276,21 +324,24 @@ defmodule Liteskill.LLM.StreamHandlerTest do
   test "omits api_key from provider_options when no bearer token configured", %{
     conversation: conv
   } do
-    Application.put_env(:liteskill, Liteskill.LLM,
-      bedrock_region: "us-east-1",
-      bedrock_model_id: "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
-    )
+    original = Application.get_env(:liteskill, Liteskill.LLM, [])
+    Application.put_env(:liteskill, Liteskill.LLM, bedrock_region: "us-east-1")
 
     stream_id = conv.stream_id
 
-    assert :ok =
-             StreamHandler.handle_stream(stream_id, [%{role: :user, content: "test"}],
-               stream_fn: fn _model, _msgs, _cb, opts ->
-                 provider_opts = Keyword.get(opts, :provider_options, [])
-                 refute Keyword.has_key?(provider_opts, :api_key)
-                 {:ok, "", []}
-               end
-             )
+    try do
+      assert :ok =
+               StreamHandler.handle_stream(stream_id, [%{role: :user, content: "test"}],
+                 model_id: "test-model",
+                 stream_fn: fn _model, _msgs, _cb, opts ->
+                   provider_opts = Keyword.get(opts, :provider_options, [])
+                   refute Keyword.has_key?(provider_opts, :api_key)
+                   {:ok, "", []}
+                 end
+               )
+    after
+      Application.put_env(:liteskill, Liteskill.LLM, original)
+    end
   end
 
   test "stream without tools does not include tools in call_opts", %{conversation: conv} do
@@ -298,6 +349,7 @@ defmodule Liteskill.LLM.StreamHandlerTest do
 
     assert :ok =
              StreamHandler.handle_stream(stream_id, [%{role: :user, content: "test"}],
+               model_id: "test-model",
                stream_fn: fn _model, _msgs, _cb, opts ->
                  assert Keyword.get(opts, :tools) == nil
                  {:ok, "", []}
@@ -386,6 +438,7 @@ defmodule Liteskill.LLM.StreamHandlerTest do
                StreamHandler.handle_stream(
                  stream_id,
                  [%{role: :user, content: "What's the weather?"}],
+                 model_id: "test-model",
                  stream_fn: tool_call_stream_fn("Let me check that.", tool_calls),
                  tools: tools,
                  tool_servers: %{"get_weather" => %{builtin: Liteskill.LLM.FakeToolServer}},
@@ -418,6 +471,7 @@ defmodule Liteskill.LLM.StreamHandlerTest do
 
       assert :ok =
                StreamHandler.handle_stream(stream_id, [%{role: :user, content: "search"}],
+                 model_id: "test-model",
                  stream_fn: tool_call_stream_fn("Let me search.", tool_calls),
                  tools: tools,
                  tool_servers: %{"search" => %{builtin: Liteskill.LLM.FakeToolServer}},
@@ -444,6 +498,7 @@ defmodule Liteskill.LLM.StreamHandlerTest do
 
       assert :ok =
                StreamHandler.handle_stream(stream_id, [%{role: :user, content: "test"}],
+                 model_id: "test-model",
                  stream_fn: fn _m, _ms, _cb, _o -> {:ok, "", tool_calls} end,
                  tools: tools,
                  auto_confirm: true
@@ -466,6 +521,7 @@ defmodule Liteskill.LLM.StreamHandlerTest do
 
       assert :ok =
                StreamHandler.handle_stream(stream_id, [%{role: :user, content: "test"}],
+                 model_id: "test-model",
                  stream_fn: tool_call_stream_fn("", tool_calls),
                  tools: tools,
                  tool_servers: %{"failing_tool" => %{builtin: Liteskill.LLM.FakeToolServer}},
@@ -487,6 +543,7 @@ defmodule Liteskill.LLM.StreamHandlerTest do
 
       assert :ok =
                StreamHandler.handle_stream(stream_id, [%{role: :user, content: "test"}],
+                 model_id: "test-model",
                  stream_fn: tool_call_stream_fn("", tool_calls),
                  tools: tools,
                  auto_confirm: true
@@ -506,6 +563,7 @@ defmodule Liteskill.LLM.StreamHandlerTest do
 
       assert :ok =
                StreamHandler.handle_stream(stream_id, [%{role: :user, content: "test"}],
+                 model_id: "test-model",
                  stream_fn: tool_call_stream_fn("", tool_calls),
                  tools: tools,
                  auto_confirm: false,
@@ -542,6 +600,7 @@ defmodule Liteskill.LLM.StreamHandlerTest do
 
       assert :ok =
                StreamHandler.handle_stream(stream_id, [%{role: :user, content: "test"}],
+                 model_id: "test-model",
                  stream_fn: tool_call_stream_fn("", tool_calls),
                  tools: tools,
                  tool_servers: %{"approved_tool" => %{builtin: Liteskill.LLM.FakeToolServer}},
@@ -564,6 +623,7 @@ defmodule Liteskill.LLM.StreamHandlerTest do
     test "records text chunks via on_text_chunk callback", %{stream_id: stream_id} do
       assert :ok =
                StreamHandler.handle_stream(stream_id, [%{role: :user, content: "test"}],
+                 model_id: "test-model",
                  stream_fn: text_chunks_stream_fn(["Hello ", "world!"])
                )
 
@@ -620,6 +680,15 @@ defmodule Liteskill.LLM.StreamHandlerTest do
     test "works with any model id" do
       assert StreamHandler.to_req_llm_model("custom-model") ==
                %{id: "custom-model", provider: :amazon_bedrock}
+    end
+
+    test "converts LlmModel struct to model spec" do
+      llm_model = %Liteskill.LlmModels.LlmModel{
+        model_id: "gpt-4o",
+        provider: %Liteskill.LlmProviders.LlmProvider{provider_type: "openai"}
+      }
+
+      assert StreamHandler.to_req_llm_model(llm_model) == %{id: "gpt-4o", provider: :openai}
     end
   end
 

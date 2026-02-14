@@ -20,14 +20,28 @@ defmodule Liteskill.Chat do
     conversation_id = params[:conversation_id] || Ecto.UUID.generate()
     stream_id = "conversation-#{conversation_id}"
 
+    model_id =
+      case params[:llm_model_id] do
+        nil ->
+          params[:model_id]
+
+        llm_model_id ->
+          case Liteskill.LlmModels.get_model!(llm_model_id) do
+            %{model_id: mid} -> mid
+            # coveralls-ignore-next-line
+            _ -> params[:model_id]
+          end
+      end
+
     command =
       {:create_conversation,
        %{
          conversation_id: conversation_id,
          user_id: params.user_id,
          title: params[:title] || "New Conversation",
-         model_id: params[:model_id] || default_model_id(),
-         system_prompt: params[:system_prompt]
+         model_id: model_id,
+         system_prompt: params[:system_prompt],
+         llm_model_id: params[:llm_model_id]
        }}
 
     case Loader.execute(ConversationAggregate, stream_id, command) do
@@ -434,11 +448,6 @@ defmodule Liteskill.Chat do
   defp has_access?(conversation, user_id) do
     conversation.user_id == user_id or
       Authorization.has_access?("conversation", conversation.id, user_id)
-  end
-
-  defp default_model_id do
-    Application.get_env(:liteskill, Liteskill.LLM, [])
-    |> Keyword.get(:bedrock_model_id, "us.anthropic.claude-3-5-sonnet-20241022-v2:0")
   end
 
   defp find_version_at_position(events, position) do

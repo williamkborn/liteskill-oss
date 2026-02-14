@@ -2,12 +2,11 @@ defmodule Liteskill.LLMTest do
   use ExUnit.Case, async: true
 
   alias Liteskill.LLM
+  alias Liteskill.LlmModels.LlmModel
+  alias Liteskill.LlmProviders.LlmProvider
 
   setup do
-    Application.put_env(:liteskill, Liteskill.LLM,
-      bedrock_region: "us-east-1",
-      bedrock_model_id: "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
-    )
+    Application.put_env(:liteskill, Liteskill.LLM, bedrock_region: "us-east-1")
 
     :ok
   end
@@ -39,7 +38,10 @@ defmodule Liteskill.LLMTest do
                   "message" => %{"role" => "assistant", "content" => [%{"text" => "Hi there"}]}
                 }
               }} =
-               LLM.complete(messages, generate_fn: fake_generate("Hi there"))
+               LLM.complete(messages,
+                 model_id: "test-model",
+                 generate_fn: fake_generate("Hi there")
+               )
     end
 
     test "allows overriding model_id" do
@@ -61,7 +63,12 @@ defmodule Liteskill.LLMTest do
         {:ok, fake_response("ok")}
       end
 
-      assert {:ok, _} = LLM.complete(messages, system: "Be brief", generate_fn: generate_fn)
+      assert {:ok, _} =
+               LLM.complete(messages,
+                 model_id: "test-model",
+                 system: "Be brief",
+                 generate_fn: generate_fn
+               )
     end
 
     test "passes temperature and max_tokens" do
@@ -75,6 +82,7 @@ defmodule Liteskill.LLMTest do
 
       assert {:ok, _} =
                LLM.complete(messages,
+                 model_id: "test-model",
                  temperature: 0.5,
                  max_tokens: 100,
                  generate_fn: generate_fn
@@ -88,34 +96,89 @@ defmodule Liteskill.LLMTest do
         {:error, %{status: 500, body: "Internal error"}}
       end
 
-      assert {:error, %{status: 500}} = LLM.complete(messages, generate_fn: generate_fn)
+      assert {:error, %{status: 500}} =
+               LLM.complete(messages, model_id: "test-model", generate_fn: generate_fn)
     end
   end
 
-  test "includes api_key in provider_options when bearer token configured" do
-    Application.put_env(:liteskill, Liteskill.LLM,
-      bedrock_region: "us-east-1",
-      bedrock_model_id: "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
-      bedrock_bearer_token: "test-token"
-    )
-
+  test "passes explicit provider_options through to generate_fn" do
     messages = [%{role: :user, content: "Hello"}]
 
     generate_fn = fn _model, _context, opts ->
       provider_opts = Keyword.get(opts, :provider_options, [])
       assert Keyword.get(provider_opts, :api_key) == "test-token"
+      assert Keyword.get(provider_opts, :region) == "us-east-1"
       {:ok, fake_response("ok")}
     end
 
-    assert {:ok, _} = LLM.complete(messages, generate_fn: generate_fn)
+    assert {:ok, _} =
+             LLM.complete(messages,
+               model_id: "test-model",
+               provider_options: [api_key: "test-token", region: "us-east-1"],
+               generate_fn: generate_fn
+             )
   end
 
-  describe "available_models/0" do
-    test "returns a list of model IDs" do
-      models = LLM.available_models()
-      assert is_list(models)
-      assert length(models) > 0
-      assert Enum.all?(models, &is_binary/1)
+  describe "complete/2 with llm_model" do
+    test "uses llm_model for provider options when provided" do
+      llm_model = %LlmModel{
+        model_id: "claude-3-5-sonnet",
+        provider: %LlmProvider{
+          provider_type: "anthropic",
+          api_key: "test-key",
+          provider_config: %{}
+        }
+      }
+
+      generate_fn = fn model, _context, opts ->
+        assert model == %{id: "claude-3-5-sonnet", provider: :anthropic}
+        assert Keyword.get(opts, :provider_options) == [api_key: "test-key"]
+        {:ok, fake_response("ok")}
+      end
+
+      assert {:ok, _} =
+               LLM.complete([%{role: :user, content: "Hi"}],
+                 llm_model: llm_model,
+                 generate_fn: generate_fn
+               )
+    end
+
+    test "llm_model with amazon_bedrock includes region and use_converse" do
+      llm_model = %LlmModel{
+        model_id: "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+        provider: %LlmProvider{
+          provider_type: "amazon_bedrock",
+          api_key: "bedrock-token",
+          provider_config: %{"region" => "us-west-2"}
+        }
+      }
+
+      generate_fn = fn model, _context, opts ->
+        assert model == %{
+                 id: "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+                 provider: :amazon_bedrock
+               }
+
+        provider_opts = Keyword.get(opts, :provider_options)
+        assert Keyword.get(provider_opts, :region) == "us-west-2"
+        assert Keyword.get(provider_opts, :use_converse) == true
+        assert Keyword.get(provider_opts, :api_key) == "bedrock-token"
+        {:ok, fake_response("ok")}
+      end
+
+      assert {:ok, _} =
+               LLM.complete([%{role: :user, content: "Hi"}],
+                 llm_model: llm_model,
+                 generate_fn: generate_fn
+               )
+    end
+  end
+
+  test "raises when no model specified" do
+    messages = [%{role: :user, content: "Hello"}]
+
+    assert_raise RuntimeError, ~r/No model specified/, fn ->
+      LLM.complete(messages, generate_fn: fn _, _, _ -> {:ok, fake_response("ok")} end)
     end
   end
 end

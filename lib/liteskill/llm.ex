@@ -5,25 +5,44 @@ defmodule Liteskill.LLM do
   Uses ReqLLM for transport. `complete/2` is used for non-streaming calls
   (e.g. conversation title generation). Streaming is handled by
   `StreamHandler` directly.
+
+  Models are configured in the database via admin UI — there are no
+  hardcoded model IDs or env-var fallbacks for model selection.
   """
 
   alias Liteskill.LLM.StreamHandler
 
   @doc """
-  Sends a non-streaming completion request to the configured LLM model.
+  Sends a non-streaming completion request.
+
+  Requires either `:llm_model` (a `%LlmModel{}` struct) or `:model_id` +
+  `:provider_options` to be passed in opts.
 
   ## Options
-    - `:model_id` - Override the default model
+    - `:llm_model` - A `%LlmModel{}` struct with full provider config
+    - `:model_id` - Model ID string (requires `:provider_options` too)
     - `:max_tokens` - Maximum tokens to generate
     - `:temperature` - Sampling temperature
     - `:system` - System prompt
+    - `:generate_fn` - Override the generation function (for testing)
   """
   def complete(messages, opts \\ []) do
-    model_id = Keyword.get(opts, :model_id, config(:bedrock_model_id))
-    model = StreamHandler.to_req_llm_model(model_id)
-    context = StreamHandler.to_req_llm_context(messages)
+    llm_model = Keyword.get(opts, :llm_model)
 
-    req_opts = [provider_options: bedrock_provider_options()]
+    {model, req_opts} =
+      if llm_model do
+        {model_spec, model_opts} = Liteskill.LlmModels.build_provider_options(llm_model)
+        {model_spec, model_opts}
+      else
+        model_id =
+          Keyword.get(opts, :model_id) ||
+            raise "No model specified: pass :llm_model or :model_id option"
+
+        provider_opts = Keyword.get(opts, :provider_options, [])
+        {StreamHandler.to_req_llm_model(model_id), [provider_options: provider_opts]}
+      end
+
+    context = StreamHandler.to_req_llm_context(messages)
 
     req_opts =
       case Keyword.get(opts, :system) do
@@ -65,29 +84,9 @@ defmodule Liteskill.LLM do
   # coveralls-ignore-stop
 
   @doc """
-  Returns the list of available model IDs.
+  Returns active LLM models available to the given user (DB-only).
   """
-  def available_models do
-    [
-      "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
-      "us.anthropic.claude-3-5-haiku-20241022-v1:0",
-      "us.anthropic.claude-sonnet-4-20250514-v1:0"
-    ]
-  end
-
-  defp bedrock_provider_options do
-    config = Application.get_env(:liteskill, __MODULE__, [])
-
-    opts = [region: Keyword.get(config, :bedrock_region, "us-east-1"), use_converse: true]
-
-    case Keyword.get(config, :bedrock_bearer_token) do
-      nil -> opts
-      token -> Keyword.put(opts, :api_key, token)
-    end
-  end
-
-  defp config(key) do
-    Application.get_env(:liteskill, __MODULE__, [])
-    |> Keyword.fetch!(key)
+  def available_models(user_id) do
+    Liteskill.LlmModels.list_active_models(user_id, model_type: "inference")
   end
 end

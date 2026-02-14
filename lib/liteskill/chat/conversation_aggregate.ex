@@ -15,6 +15,7 @@ defmodule Liteskill.Chat.ConversationAggregate do
     :title,
     :model_id,
     :system_prompt,
+    :llm_model_id,
     :parent_stream_id,
     :fork_at_version,
     status: :created,
@@ -39,7 +40,8 @@ defmodule Liteskill.Chat.ConversationAggregate do
         user_id: params.user_id,
         title: params.title,
         model_id: params.model_id,
-        system_prompt: params[:system_prompt]
+        system_prompt: params[:system_prompt],
+        llm_model_id: params[:llm_model_id]
       })
 
     {:ok, [event]}
@@ -265,6 +267,7 @@ defmodule Liteskill.Chat.ConversationAggregate do
         title: data["title"],
         model_id: data["model_id"],
         system_prompt: data["system_prompt"],
+        llm_model_id: data["llm_model_id"],
         status: :active
     }
   end

@@ -96,6 +96,7 @@ defmodule Liteskill.Chat.Projector do
       title: data["title"],
       model_id: data["model_id"],
       system_prompt: data["system_prompt"],
+      llm_model_id: data["llm_model_id"],
       status: "active"
     })
     |> Repo.insert!(on_conflict: :nothing)

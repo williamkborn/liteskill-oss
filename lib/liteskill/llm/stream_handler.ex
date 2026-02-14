@@ -53,7 +53,15 @@ defmodule Liteskill.LLM.StreamHandler do
   end
 
   defp do_handle_stream(stream_id, messages, opts) do
-    model_id = Keyword.get(opts, :model_id, default_model_id())
+    llm_model = Keyword.get(opts, :llm_model)
+
+    model_id =
+      cond do
+        llm_model -> llm_model.model_id
+        Keyword.has_key?(opts, :model_id) -> Keyword.get(opts, :model_id)
+        true -> raise "No model specified: pass :llm_model or :model_id option"
+      end
+
     message_id = Ecto.UUID.generate()
     rag_sources = Keyword.get(opts, :rag_sources)
 
@@ -151,7 +159,8 @@ defmodule Liteskill.LLM.StreamHandler do
 
   # coveralls-ignore-start
   defp default_stream(model_id, messages, on_text_chunk, opts) do
-    model = to_req_llm_model(model_id)
+    {llm_model, opts} = Keyword.pop(opts, :llm_model)
+    model = if llm_model, do: to_req_llm_model(llm_model), else: to_req_llm_model(model_id)
     context = to_req_llm_context(messages)
 
     case ReqLLM.stream_text(model, context, opts) do
@@ -187,7 +196,11 @@ defmodule Liteskill.LLM.StreamHandler do
   # -- Message / Context translation --
 
   @doc false
-  def to_req_llm_model(model_id) do
+  def to_req_llm_model(%Liteskill.LlmModels.LlmModel{provider: %{provider_type: pt}} = m) do
+    %{id: m.model_id, provider: String.to_existing_atom(pt)}
+  end
+
+  def to_req_llm_model(model_id) when is_binary(model_id) do
     %{id: model_id, provider: :amazon_bedrock}
   end
 
@@ -256,7 +269,17 @@ defmodule Liteskill.LLM.StreamHandler do
   # -- Options translation --
 
   defp build_call_opts(opts) do
-    req_opts = [provider_options: bedrock_provider_options()]
+    llm_model = Keyword.get(opts, :llm_model)
+
+    req_opts =
+      case llm_model do
+        nil ->
+          [provider_options: bedrock_provider_options()]
+
+        llm_model ->
+          {_model_spec, model_opts} = Liteskill.LlmModels.build_provider_options(llm_model)
+          Keyword.put(model_opts, :llm_model, llm_model)
+      end
 
     req_opts =
       case Keyword.get(opts, :system) do
@@ -674,10 +697,5 @@ defmodule Liteskill.LLM.StreamHandler do
       {:error, reason} ->
         {:error, reason}
     end
-  end
-
-  defp default_model_id do
-    Application.get_env(:liteskill, Liteskill.LLM, [])
-    |> Keyword.get(:bedrock_model_id, "us.anthropic.claude-3-5-sonnet-20241022-v2:0")
   end
 end

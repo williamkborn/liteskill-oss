@@ -18,6 +18,25 @@ defmodule LiteskillWeb.ChatLive do
   def mount(_params, _session, socket) do
     conversations = Chat.list_conversations(socket.assigns.current_user.id)
 
+    user = socket.assigns.current_user
+
+    available_llm_models =
+      Liteskill.LlmModels.list_active_models(user.id, model_type: "inference")
+
+    preferred_id = get_in(user.preferences, ["preferred_llm_model_id"])
+
+    selected_llm_model_id =
+      cond do
+        preferred_id && Enum.any?(available_llm_models, &(&1.id == preferred_id)) ->
+          preferred_id
+
+        available_llm_models != [] ->
+          hd(available_llm_models).id
+
+        true ->
+          nil
+      end
+
     {:ok,
      socket
      |> assign(
@@ -105,7 +124,10 @@ defmodule LiteskillWeb.ChatLive do
        sharing_user_search_results: [],
        sharing_user_search_query: "",
        sharing_groups: [],
-       sharing_error: nil
+       sharing_error: nil,
+       # LLM model selection
+       available_llm_models: available_llm_models,
+       selected_llm_model_id: selected_llm_model_id
      )
      |> assign(WikiLive.wiki_assigns())
      |> assign(ReportsLive.reports_assigns())
@@ -133,7 +155,15 @@ defmodule LiteskillWeb.ChatLive do
   end
 
   defp apply_action(socket, action, _params)
-       when action in [:info, :password, :admin_servers, :admin_users, :admin_groups] do
+       when action in [
+              :info,
+              :password,
+              :admin_servers,
+              :admin_users,
+              :admin_groups,
+              :admin_providers,
+              :admin_models
+            ] do
     maybe_unsubscribe(socket)
 
     socket
@@ -1412,6 +1442,12 @@ defmodule LiteskillWeb.ChatLive do
             group_detail={@group_detail}
             group_members={@group_members}
             temp_password_user_id={@temp_password_user_id}
+            llm_models={@llm_models}
+            editing_llm_model={@editing_llm_model}
+            llm_model_form={@llm_model_form}
+            llm_providers={@llm_providers}
+            editing_llm_provider={@editing_llm_provider}
+            llm_provider_form={@llm_provider_form}
           />
         <% end %>
         <%= if @live_action == :conversations do %>
@@ -1628,10 +1664,12 @@ defmodule LiteskillWeb.ChatLive do
                 </div>
 
                 <div class="flex-shrink-0 border-t border-base-300 px-4 py-3">
-                  <McpComponents.selected_server_badges
-                    available_tools={@available_tools}
-                    selected_server_ids={@selected_server_ids}
-                  />
+                  <div class="flex items-center gap-2 mb-1">
+                    <McpComponents.selected_server_badges
+                      available_tools={@available_tools}
+                      selected_server_ids={@selected_server_ids}
+                    />
+                  </div>
                   <.form
                     for={@form}
                     phx-submit="send_message"
@@ -1670,6 +1708,25 @@ defmodule LiteskillWeb.ChatLive do
                       <.icon name="hero-stop-micro" class="size-5" />
                     </button>
                   </.form>
+                  <div
+                    :if={@available_llm_models != []}
+                    class="flex items-center gap-1 mt-1 px-1"
+                  >
+                    <.icon name="hero-cpu-chip-micro" class="size-3 text-base-content/40" />
+                    <form phx-change="select_llm_model">
+                      <select
+                        id="model-picker-conversation"
+                        name="model_id"
+                        class="select select-ghost select-xs text-xs text-base-content/50 hover:text-base-content/70 min-h-0 h-6 pl-0"
+                      >
+                        <%= for m <- @available_llm_models do %>
+                          <option value={m.id} selected={m.id == @selected_llm_model_id}>
+                            {m.name}
+                          </option>
+                        <% end %>
+                      </select>
+                    </form>
+                  </div>
                 </div>
               </div>
               <SourcesComponents.sources_sidebar
@@ -1721,6 +1778,34 @@ defmodule LiteskillWeb.ChatLive do
                     <.icon name="hero-paper-airplane-micro" class="size-5" />
                   </button>
                 </.form>
+                <div
+                  :if={@available_llm_models != []}
+                  class="flex items-center gap-1 mt-2 px-1"
+                >
+                  <.icon name="hero-cpu-chip-micro" class="size-3 text-base-content/40" />
+                  <form phx-change="select_llm_model">
+                    <select
+                      id="model-picker-new"
+                      name="model_id"
+                      class="select select-ghost select-xs text-xs text-base-content/50 hover:text-base-content/70 min-h-0 h-6 pl-0"
+                    >
+                      <%= for m <- @available_llm_models do %>
+                        <option value={m.id} selected={m.id == @selected_llm_model_id}>
+                          {m.name}
+                        </option>
+                      <% end %>
+                    </select>
+                  </form>
+                </div>
+                <p
+                  :if={@available_llm_models == []}
+                  class="text-sm text-warning mt-2 px-1"
+                >
+                  No models configured.
+                  <.link navigate={~p"/profile/admin/models"} class="link link-primary">
+                    Add one in Settings
+                  </.link>
+                </p>
               </div>
             </div>
           <% end %>
@@ -2146,53 +2231,64 @@ defmodule LiteskillWeb.ChatLive do
   def handle_event("send_message", %{"message" => %{"content" => content}}, socket) do
     content = String.trim(content)
 
-    if content == "" do
-      {:noreply, socket}
-    else
-      user_id = socket.assigns.current_user.id
-      tool_config = build_tool_config(socket)
+    cond do
+      content == "" ->
+        {:noreply, socket}
 
-      case socket.assigns.conversation do
-        nil ->
-          # Create new conversation, send message, navigate to it
-          case Chat.create_conversation(%{user_id: user_id, title: truncate_title(content)}) do
-            {:ok, conversation} ->
-              case Chat.send_message(conversation.id, user_id, content, tool_config: tool_config) do
-                {:ok, _message} ->
-                  {:noreply, push_navigate(socket, to: "/c/#{conversation.id}?auto_stream=1")}
+      socket.assigns.available_llm_models == [] ->
+        {:noreply,
+         put_flash(socket, :error, "No models configured. Add one in Settings > Models.")}
 
-                {:error, _reason} ->
-                  {:noreply, put_flash(socket, :error, "Failed to send message")}
-              end
+      true ->
+        user_id = socket.assigns.current_user.id
+        tool_config = build_tool_config(socket)
 
-            {:error, _reason} ->
-              {:noreply, put_flash(socket, :error, "Failed to create conversation")}
-          end
+        case socket.assigns.conversation do
+          nil ->
+            create_params = %{
+              user_id: user_id,
+              title: truncate_title(content),
+              llm_model_id: socket.assigns.selected_llm_model_id
+            }
 
-        conversation ->
-          # Send message to existing conversation
-          case Chat.send_message(conversation.id, user_id, content, tool_config: tool_config) do
-            {:ok, _message} ->
-              # Reload messages and trigger LLM
-              {:ok, messages} = Chat.list_messages(conversation.id, user_id)
-              pid = trigger_llm_stream(conversation, user_id, socket, tool_config)
+            case Chat.create_conversation(create_params) do
+              {:ok, conversation} ->
+                case Chat.send_message(conversation.id, user_id, content,
+                       tool_config: tool_config
+                     ) do
+                  {:ok, _message} ->
+                    {:noreply, push_navigate(socket, to: "/c/#{conversation.id}?auto_stream=1")}
 
-              {:noreply,
-               socket
-               |> assign(
-                 messages: messages,
-                 form: to_form(%{"content" => ""}, as: :message),
-                 streaming: true,
-                 stream_content: "",
-                 stream_error: nil,
-                 pending_tool_calls: [],
-                 stream_task_pid: pid
-               )}
+                  {:error, _reason} ->
+                    {:noreply, put_flash(socket, :error, "Failed to send message")}
+                end
 
-            {:error, _reason} ->
-              {:noreply, put_flash(socket, :error, "Failed to send message")}
-          end
-      end
+              {:error, _reason} ->
+                {:noreply, put_flash(socket, :error, "Failed to create conversation")}
+            end
+
+          conversation ->
+            case Chat.send_message(conversation.id, user_id, content, tool_config: tool_config) do
+              {:ok, _message} ->
+                {:ok, messages} = Chat.list_messages(conversation.id, user_id)
+                pid = trigger_llm_stream(conversation, user_id, socket, tool_config)
+
+                {:noreply,
+                 socket
+                 |> assign(
+                   messages: messages,
+                   form: to_form(%{"content" => ""}, as: :message),
+                   streaming: true,
+                   stream_content: "",
+                   stream_error: nil,
+                   pending_tool_calls: [],
+                   stream_task_pid: pid
+                 )}
+
+              {:error, _reason} ->
+                {:noreply, put_flash(socket, :error, "Failed to send message")}
+            end
+        end
     end
   end
 
@@ -2501,6 +2597,13 @@ defmodule LiteskillWeb.ChatLive do
   # --- Tool Picker Events ---
 
   @impl true
+  def handle_event("select_llm_model", %{"model_id" => id}, socket) do
+    user = socket.assigns.current_user
+    Liteskill.Accounts.update_preferences(user, %{"preferred_llm_model_id" => id})
+    {:noreply, assign(socket, selected_llm_model_id: id)}
+  end
+
+  @impl true
   def handle_event("toggle_tool_picker", _params, socket) do
     show = !socket.assigns.show_tool_picker
 
@@ -2790,7 +2893,9 @@ defmodule LiteskillWeb.ChatLive do
 
   @profile_events ~w(change_password promote_user demote_user create_group
     admin_delete_group view_group admin_add_member admin_remove_member set_accent_color
-    show_temp_password_form cancel_temp_password set_temp_password)
+    show_temp_password_form cancel_temp_password set_temp_password
+    new_llm_model cancel_llm_model create_llm_model edit_llm_model update_llm_model delete_llm_model
+    new_llm_provider cancel_llm_provider create_llm_provider edit_llm_provider update_llm_provider delete_llm_provider)
 
   def handle_event(event, params, socket) when event in @profile_events do
     ProfileLive.handle_event(event, params, socket)
@@ -3300,6 +3405,19 @@ defmodule LiteskillWeb.ChatLive do
 
     # Pass rag_sources through the event store so they survive navigation
     opts = if rag_sources_json, do: [{:rag_sources, rag_sources_json} | opts], else: opts
+
+    # Load LLM model config from UI-selected model
+    opts =
+      case socket.assigns[:selected_llm_model_id] do
+        nil ->
+          opts
+
+        model_id ->
+          case Liteskill.LlmModels.get_model(model_id, user_id) do
+            {:ok, llm_model} -> [{:llm_model, llm_model} | opts]
+            _ -> opts
+          end
+      end
 
     {:ok, pid} =
       Task.Supervisor.start_child(Liteskill.TaskSupervisor, fn ->

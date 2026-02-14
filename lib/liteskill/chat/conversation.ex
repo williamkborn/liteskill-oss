@@ -21,6 +21,7 @@ defmodule Liteskill.Chat.Conversation do
 
     belongs_to :user, Liteskill.Accounts.User
     belongs_to :parent_conversation, __MODULE__
+    belongs_to :llm_model, Liteskill.LlmModels.LlmModel
     has_many :messages, Liteskill.Chat.Message
     has_many :branches, __MODULE__, foreign_key: :parent_conversation_id
 
@@ -39,7 +40,8 @@ defmodule Liteskill.Chat.Conversation do
       :parent_conversation_id,
       :fork_at_version,
       :message_count,
-      :last_message_at
+      :last_message_at,
+      :llm_model_id
     ])
     |> validate_required([:stream_id, :user_id, :status])
     |> unique_constraint(:stream_id)

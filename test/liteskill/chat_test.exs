@@ -51,6 +51,30 @@ defmodule Liteskill.ChatTest do
       assert conversation.system_prompt == "Be brief"
     end
 
+    test "resolves model_id from llm_model_id", %{user: user} do
+      {:ok, provider} =
+        Liteskill.LlmProviders.create_provider(%{
+          name: "Test Provider",
+          provider_type: "amazon_bedrock",
+          api_key: "test-key",
+          provider_config: %{"region" => "us-east-1"},
+          user_id: user.id
+        })
+
+      {:ok, llm_model} =
+        Liteskill.LlmModels.create_model(%{
+          name: "Test Model",
+          model_id: "us.anthropic.claude-3-5-sonnet",
+          provider_id: provider.id,
+          user_id: user.id
+        })
+
+      assert {:ok, conversation} =
+               Chat.create_conversation(%{user_id: user.id, llm_model_id: llm_model.id})
+
+      assert conversation.model_id == "us.anthropic.claude-3-5-sonnet"
+    end
+
     test "auto-creates owner ACL", %{user: user} do
       {:ok, conv} = Chat.create_conversation(%{user_id: user.id})
 

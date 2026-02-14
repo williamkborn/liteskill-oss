@@ -253,7 +253,9 @@ defmodule Liteskill.Authorization do
     "conversation" => Liteskill.Chat.Conversation,
     "mcp_server" => Liteskill.McpServers.McpServer,
     "data_source" => Liteskill.DataSources.Source,
-    "wiki_space" => Liteskill.DataSources.Document
+    "wiki_space" => Liteskill.DataSources.Document,
+    "llm_model" => Liteskill.LlmModels.LlmModel,
+    "llm_provider" => Liteskill.LlmProviders.LlmProvider
   }
 
   @doc """
