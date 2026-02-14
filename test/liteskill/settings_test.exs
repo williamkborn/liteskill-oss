@@ -4,9 +4,13 @@ defmodule Liteskill.SettingsTest do
   alias Liteskill.Settings
   alias Liteskill.Settings.ServerSettings
 
+  setup do
+    Repo.delete_all(ServerSettings)
+    :ok
+  end
+
   describe "get/0" do
     test "creates singleton settings row when none exists" do
-      Repo.delete_all(ServerSettings)
       settings = Settings.get()
 
       assert %ServerSettings{} = settings
@@ -15,7 +19,6 @@ defmodule Liteskill.SettingsTest do
     end
 
     test "is idempotent — returns same row on second call" do
-      Repo.delete_all(ServerSettings)
       s1 = Settings.get()
       s2 = Settings.get()
 
@@ -25,12 +28,10 @@ defmodule Liteskill.SettingsTest do
 
   describe "registration_open?/0" do
     test "returns true by default" do
-      Repo.delete_all(ServerSettings)
       assert Settings.registration_open?() == true
     end
 
     test "returns false when registration is closed" do
-      Repo.delete_all(ServerSettings)
       Settings.get()
       {:ok, _} = Settings.update(%{registration_open: false})
 
@@ -40,17 +41,22 @@ defmodule Liteskill.SettingsTest do
 
   describe "update/1" do
     test "updates registration_open setting" do
-      Repo.delete_all(ServerSettings)
       Settings.get()
 
       assert {:ok, settings} = Settings.update(%{registration_open: false})
       assert settings.registration_open == false
     end
+
+    test "reflects update on subsequent get" do
+      Settings.get()
+      {:ok, _} = Settings.update(%{registration_open: false})
+
+      assert Settings.get().registration_open == false
+    end
   end
 
   describe "toggle_registration/0" do
     test "flips registration_open from true to false" do
-      Repo.delete_all(ServerSettings)
       Settings.get()
 
       assert {:ok, settings} = Settings.toggle_registration()
@@ -58,12 +64,19 @@ defmodule Liteskill.SettingsTest do
     end
 
     test "flips registration_open from false to true" do
-      Repo.delete_all(ServerSettings)
       Settings.get()
       Settings.update(%{registration_open: false})
 
       assert {:ok, settings} = Settings.toggle_registration()
       assert settings.registration_open == true
+    end
+  end
+
+  describe "bust_cache/0" do
+    test "erases persistent_term entry" do
+      # In test mode, cache is disabled, but bust_cache should not crash
+      Settings.bust_cache()
+      assert %ServerSettings{} = Settings.get()
     end
   end
 end

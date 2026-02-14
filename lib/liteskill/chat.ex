@@ -32,6 +32,14 @@ defmodule Liteskill.Chat do
           end
       end
 
+    if params[:llm_model_id] && is_nil(model_id) do
+      {:error, :no_model_configured}
+    else
+      do_create_conversation(conversation_id, stream_id, params, model_id, llm_model_id)
+    end
+  end
+
+  defp do_create_conversation(conversation_id, stream_id, params, model_id, llm_model_id) do
     command =
       {:create_conversation,
        %{

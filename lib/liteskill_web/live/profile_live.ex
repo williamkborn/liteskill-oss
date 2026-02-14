@@ -1164,6 +1164,14 @@ defmodule LiteskillWeb.ProfileLive do
 
   # --- Event Handlers (called from ChatLive) ---
 
+  defp require_admin(socket, fun) do
+    if User.admin?(socket.assigns.current_user) do
+      fun.()
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_event("change_password", %{"password" => params}, socket) do
     current = params["current"]
     new_pass = params["new"]
@@ -1215,35 +1223,29 @@ defmodule LiteskillWeb.ProfileLive do
   end
 
   def handle_event("promote_user", %{"id" => id}, socket) do
-    if User.admin?(socket.assigns.current_user) do
+    require_admin(socket, fn ->
       Accounts.update_user_role(id, "admin")
       {:noreply, Phoenix.Component.assign(socket, profile_users: Accounts.list_users())}
-    else
-      {:noreply, socket}
-    end
+    end)
   end
 
   def handle_event("demote_user", %{"id" => id}, socket) do
-    if User.admin?(socket.assigns.current_user) do
+    require_admin(socket, fn ->
       Accounts.update_user_role(id, "user")
       {:noreply, Phoenix.Component.assign(socket, profile_users: Accounts.list_users())}
-    else
-      {:noreply, socket}
-    end
+    end)
   end
 
   def handle_event("create_group", %{"name" => name}, socket) do
-    if User.admin?(socket.assigns.current_user) do
+    require_admin(socket, fn ->
       user_id = socket.assigns.current_user.id
       Groups.create_group(name, user_id)
       {:noreply, Phoenix.Component.assign(socket, profile_groups: Groups.list_all_groups())}
-    else
-      {:noreply, socket}
-    end
+    end)
   end
 
   def handle_event("admin_delete_group", %{"id" => id}, socket) do
-    if User.admin?(socket.assigns.current_user) do
+    require_admin(socket, fn ->
       Groups.admin_delete_group(id)
 
       socket =
@@ -1254,13 +1256,11 @@ defmodule LiteskillWeb.ProfileLive do
         end
 
       {:noreply, Phoenix.Component.assign(socket, profile_groups: Groups.list_all_groups())}
-    else
-      {:noreply, socket}
-    end
+    end)
   end
 
   def handle_event("view_group", %{"id" => id}, socket) do
-    if User.admin?(socket.assigns.current_user) do
+    require_admin(socket, fn ->
       case Groups.admin_get_group(id) do
         {:ok, group} ->
           members = Groups.admin_list_members(id)
@@ -1271,13 +1271,11 @@ defmodule LiteskillWeb.ProfileLive do
         {:error, _} ->
           {:noreply, socket}
       end
-    else
-      {:noreply, socket}
-    end
+    end)
   end
 
   def handle_event("admin_add_member", %{"email" => email}, socket) do
-    if User.admin?(socket.assigns.current_user) do
+    require_admin(socket, fn ->
       group = socket.assigns.group_detail
 
       case Accounts.get_user_by_email(email) do
@@ -1296,21 +1294,17 @@ defmodule LiteskillWeb.ProfileLive do
               {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Failed to add member")}
           end
       end
-    else
-      {:noreply, socket}
-    end
+    end)
   end
 
   def handle_event("admin_remove_member", %{"user-id" => user_id}, socket) do
-    if User.admin?(socket.assigns.current_user) do
+    require_admin(socket, fn ->
       group = socket.assigns.group_detail
       Groups.admin_remove_member(group.id, user_id)
 
       {:noreply,
        Phoenix.Component.assign(socket, group_members: Groups.admin_list_members(group.id))}
-    else
-      {:noreply, socket}
-    end
+    end)
   end
 
   def handle_event("set_accent_color", %{"color" => color}, socket) do
@@ -1337,7 +1331,7 @@ defmodule LiteskillWeb.ProfileLive do
   end
 
   def handle_event("set_temp_password", %{"user_id" => id, "password" => password}, socket) do
-    if User.admin?(socket.assigns.current_user) do
+    require_admin(socket, fn ->
       user = Accounts.get_user!(id)
 
       case Accounts.set_temporary_password(user, password) do
@@ -1361,15 +1355,13 @@ defmodule LiteskillWeb.ProfileLive do
              "Failed to set password. Ensure it is at least 12 characters."
            )}
       end
-    else
-      {:noreply, socket}
-    end
+    end)
   end
 
   # --- Registration & Invitation event handlers ---
 
   def handle_event("toggle_registration", _params, socket) do
-    if User.admin?(socket.assigns.current_user) do
+    require_admin(socket, fn ->
       case Settings.toggle_registration() do
         {:ok, settings} ->
           {:noreply, Phoenix.Component.assign(socket, server_settings: settings)}
@@ -1377,13 +1369,11 @@ defmodule LiteskillWeb.ProfileLive do
         {:error, _} ->
           {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Failed to toggle registration")}
       end
-    else
-      {:noreply, socket}
-    end
+    end)
   end
 
   def handle_event("create_invitation", %{"email" => email}, socket) do
-    if User.admin?(socket.assigns.current_user) do
+    require_admin(socket, fn ->
       case Accounts.create_invitation(email, socket.assigns.current_user.id) do
         {:ok, invitation} ->
           url = LiteskillWeb.Endpoint.url() <> "/invite/#{invitation.token}"
@@ -1399,13 +1389,11 @@ defmodule LiteskillWeb.ProfileLive do
         {:error, _} ->
           {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Failed to create invitation")}
       end
-    else
-      {:noreply, socket}
-    end
+    end)
   end
 
   def handle_event("revoke_invitation", %{"id" => id}, socket) do
-    if User.admin?(socket.assigns.current_user) do
+    require_admin(socket, fn ->
       case Accounts.revoke_invitation(id) do
         {:ok, _} ->
           {:noreply,
@@ -1420,9 +1408,7 @@ defmodule LiteskillWeb.ProfileLive do
         {:error, _} ->
           {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Failed to revoke invitation")}
       end
-    else
-      {:noreply, socket}
-    end
+    end)
   end
 
   # --- LLM Provider event handlers ---
@@ -1440,7 +1426,7 @@ defmodule LiteskillWeb.ProfileLive do
   end
 
   def handle_event("create_llm_provider", %{"llm_provider" => params}, socket) do
-    if User.admin?(socket.assigns.current_user) do
+    require_admin(socket, fn ->
       attrs = build_provider_attrs(params, socket.assigns.current_user.id)
 
       case LlmProviders.create_provider(attrs) do
@@ -1456,13 +1442,11 @@ defmodule LiteskillWeb.ProfileLive do
         {:error, _} ->
           {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Failed to create provider")}
       end
-    else
-      {:noreply, socket}
-    end
+    end)
   end
 
   def handle_event("edit_llm_provider", %{"id" => id}, socket) do
-    if User.admin?(socket.assigns.current_user) do
+    require_admin(socket, fn ->
       case LlmProviders.get_provider(id, socket.assigns.current_user.id) do
         {:ok, provider} ->
           config_json =
@@ -1488,13 +1472,11 @@ defmodule LiteskillWeb.ProfileLive do
         {:error, _} ->
           {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Provider not found")}
       end
-    else
-      {:noreply, socket}
-    end
+    end)
   end
 
   def handle_event("update_llm_provider", %{"llm_provider" => params}, socket) do
-    if User.admin?(socket.assigns.current_user) do
+    require_admin(socket, fn ->
       id = params["id"]
       attrs = build_provider_attrs(params, socket.assigns.current_user.id)
 
@@ -1511,13 +1493,11 @@ defmodule LiteskillWeb.ProfileLive do
         {:error, _} ->
           {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Failed to update provider")}
       end
-    else
-      {:noreply, socket}
-    end
+    end)
   end
 
   def handle_event("delete_llm_provider", %{"id" => id}, socket) do
-    if User.admin?(socket.assigns.current_user) do
+    require_admin(socket, fn ->
       case LlmProviders.delete_provider(id, socket.assigns.current_user.id) do
         {:ok, _} ->
           {:noreply,
@@ -1536,9 +1516,7 @@ defmodule LiteskillWeb.ProfileLive do
              "Failed to delete provider. Remove its models first."
            )}
       end
-    else
-      {:noreply, socket}
-    end
+    end)
   end
 
   # --- LLM Model event handlers ---
@@ -1556,7 +1534,7 @@ defmodule LiteskillWeb.ProfileLive do
   end
 
   def handle_event("create_llm_model", %{"llm_model" => params}, socket) do
-    if User.admin?(socket.assigns.current_user) do
+    require_admin(socket, fn ->
       attrs = build_model_attrs(params, socket.assigns.current_user.id)
 
       case LlmModels.create_model(attrs) do
@@ -1572,13 +1550,11 @@ defmodule LiteskillWeb.ProfileLive do
         {:error, _} ->
           {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Failed to create model")}
       end
-    else
-      {:noreply, socket}
-    end
+    end)
   end
 
   def handle_event("edit_llm_model", %{"id" => id}, socket) do
-    if User.admin?(socket.assigns.current_user) do
+    require_admin(socket, fn ->
       case LlmModels.get_model(id, socket.assigns.current_user.id) do
         {:ok, model} ->
           config_json =
@@ -1605,13 +1581,11 @@ defmodule LiteskillWeb.ProfileLive do
         {:error, _} ->
           {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Model not found")}
       end
-    else
-      {:noreply, socket}
-    end
+    end)
   end
 
   def handle_event("update_llm_model", %{"llm_model" => params}, socket) do
-    if User.admin?(socket.assigns.current_user) do
+    require_admin(socket, fn ->
       id = params["id"]
       attrs = build_model_attrs(params, socket.assigns.current_user.id)
 
@@ -1628,13 +1602,11 @@ defmodule LiteskillWeb.ProfileLive do
         {:error, _} ->
           {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Failed to update model")}
       end
-    else
-      {:noreply, socket}
-    end
+    end)
   end
 
   def handle_event("delete_llm_model", %{"id" => id}, socket) do
-    if User.admin?(socket.assigns.current_user) do
+    require_admin(socket, fn ->
       case LlmModels.delete_model(id, socket.assigns.current_user.id) do
         {:ok, _} ->
           {:noreply,
@@ -1648,9 +1620,7 @@ defmodule LiteskillWeb.ProfileLive do
         {:error, _} ->
           {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Failed to delete model")}
       end
-    else
-      {:noreply, socket}
-    end
+    end)
   end
 
   defp build_provider_attrs(params, user_id) do

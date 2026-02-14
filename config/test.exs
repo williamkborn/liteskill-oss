@@ -50,3 +50,6 @@ config :liteskill, Oban, testing: :manual
 
 # Used by Application to skip ensure_admin_user Task (sandbox not available)
 config :liteskill, env: :test
+
+# Disable persistent_term cache for Settings (incompatible with Ecto sandbox)
+config :liteskill, :settings_cache, false

@@ -79,7 +79,7 @@ defmodule Liteskill.Rag.IngestWorker do
         req_opts
       end
 
-    case Req.request(Req.new(), req_opts) do
+    case Req.request(Req.new(retry: false), req_opts) do
       {:ok, response} ->
         {:ok, response}
 
