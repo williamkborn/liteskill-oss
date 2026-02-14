@@ -13,6 +13,8 @@ defmodule Liteskill.LlmModels do
 
   import Ecto.Query
 
+  require Logger
+
   # --- Admin CRUD ---
 
   def create_model(attrs) do
@@ -80,11 +82,13 @@ defmodule Liteskill.LlmModels do
 
     query =
       LlmModel
+      |> join(:inner, [m], p in assoc(m, :provider))
       |> where(
-        [m],
+        [m, _p],
         m.user_id == ^user_id or m.instance_wide == true or m.id in subquery(accessible_ids)
       )
-      |> where([m], m.status == "active")
+      |> where([m, _p], m.status == "active")
+      |> where([_m, p], p.status == "active")
 
     query =
       case Keyword.get(opts, :model_type) do
@@ -173,7 +177,9 @@ defmodule Liteskill.LlmModels do
       try do
         [{String.to_existing_atom(k), v} | acc]
       rescue
-        _e in [ArgumentError] -> acc
+        _e in [ArgumentError] ->
+          Logger.warning("LlmModels: dropping unknown provider config key #{inspect(k)}")
+          acc
       end
     end)
   end

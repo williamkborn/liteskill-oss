@@ -161,8 +161,8 @@ defmodule Liteskill.LLM.StreamHandler do
 
   # coveralls-ignore-start
   defp default_stream(model_id, messages, on_text_chunk, opts) do
-    {llm_model, opts} = Keyword.pop(opts, :llm_model)
-    model = if llm_model, do: to_req_llm_model(llm_model), else: to_req_llm_model(model_id)
+    {model_spec, opts} = Keyword.pop(opts, :model_spec)
+    model = model_spec || to_req_llm_model(model_id)
     context = to_req_llm_context(messages)
 
     case ReqLLM.stream_text(model, context, opts) do
@@ -279,8 +279,8 @@ defmodule Liteskill.LLM.StreamHandler do
           [provider_options: bedrock_provider_options()]
 
         llm_model ->
-          {_model_spec, model_opts} = Liteskill.LlmModels.build_provider_options(llm_model)
-          Keyword.put(model_opts, :llm_model, llm_model)
+          {model_spec, model_opts} = Liteskill.LlmModels.build_provider_options(llm_model)
+          Keyword.put(model_opts, :model_spec, model_spec)
       end
 
     req_opts =
@@ -389,7 +389,7 @@ defmodule Liteskill.LLM.StreamHandler do
               Map.get(error, :reason)
 
             true ->
-              inspect(error)
+              "LLM request failed"
           end
 
         %{status: Map.get(error, :status), body: body}

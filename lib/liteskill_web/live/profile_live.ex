@@ -1427,17 +1427,18 @@ defmodule LiteskillWeb.ProfileLive do
 
   def handle_event("create_llm_provider", %{"llm_provider" => params}, socket) do
     require_admin(socket, fn ->
-      attrs = build_provider_attrs(params, socket.assigns.current_user.id)
-
-      case LlmProviders.create_provider(attrs) do
-        {:ok, _provider} ->
-          {:noreply,
-           socket
-           |> Phoenix.Component.assign(
-             llm_providers: LlmProviders.list_providers(socket.assigns.current_user.id),
-             editing_llm_provider: nil
-           )
-           |> Phoenix.LiveView.put_flash(:info, "Provider created")}
+      with {:ok, attrs} <- build_provider_attrs(params, socket.assigns.current_user.id),
+           {:ok, _provider} <- LlmProviders.create_provider(attrs) do
+        {:noreply,
+         socket
+         |> Phoenix.Component.assign(
+           llm_providers: LlmProviders.list_providers(socket.assigns.current_user.id),
+           editing_llm_provider: nil
+         )
+         |> Phoenix.LiveView.put_flash(:info, "Provider created")}
+      else
+        {:error, msg} when is_binary(msg) ->
+          {:noreply, Phoenix.LiveView.put_flash(socket, :error, msg)}
 
         {:error, _} ->
           {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Failed to create provider")}
@@ -1478,17 +1479,20 @@ defmodule LiteskillWeb.ProfileLive do
   def handle_event("update_llm_provider", %{"llm_provider" => params}, socket) do
     require_admin(socket, fn ->
       id = params["id"]
-      attrs = build_provider_attrs(params, socket.assigns.current_user.id)
 
-      case LlmProviders.update_provider(id, socket.assigns.current_user.id, attrs) do
-        {:ok, _provider} ->
-          {:noreply,
-           socket
-           |> Phoenix.Component.assign(
-             llm_providers: LlmProviders.list_providers(socket.assigns.current_user.id),
-             editing_llm_provider: nil
-           )
-           |> Phoenix.LiveView.put_flash(:info, "Provider updated")}
+      with {:ok, attrs} <- build_provider_attrs(params, socket.assigns.current_user.id),
+           {:ok, _provider} <-
+             LlmProviders.update_provider(id, socket.assigns.current_user.id, attrs) do
+        {:noreply,
+         socket
+         |> Phoenix.Component.assign(
+           llm_providers: LlmProviders.list_providers(socket.assigns.current_user.id),
+           editing_llm_provider: nil
+         )
+         |> Phoenix.LiveView.put_flash(:info, "Provider updated")}
+      else
+        {:error, msg} when is_binary(msg) ->
+          {:noreply, Phoenix.LiveView.put_flash(socket, :error, msg)}
 
         {:error, _} ->
           {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Failed to update provider")}
@@ -1535,17 +1539,18 @@ defmodule LiteskillWeb.ProfileLive do
 
   def handle_event("create_llm_model", %{"llm_model" => params}, socket) do
     require_admin(socket, fn ->
-      attrs = build_model_attrs(params, socket.assigns.current_user.id)
-
-      case LlmModels.create_model(attrs) do
-        {:ok, _model} ->
-          {:noreply,
-           socket
-           |> Phoenix.Component.assign(
-             llm_models: LlmModels.list_models(socket.assigns.current_user.id),
-             editing_llm_model: nil
-           )
-           |> Phoenix.LiveView.put_flash(:info, "Model created")}
+      with {:ok, attrs} <- build_model_attrs(params, socket.assigns.current_user.id),
+           {:ok, _model} <- LlmModels.create_model(attrs) do
+        {:noreply,
+         socket
+         |> Phoenix.Component.assign(
+           llm_models: LlmModels.list_models(socket.assigns.current_user.id),
+           editing_llm_model: nil
+         )
+         |> Phoenix.LiveView.put_flash(:info, "Model created")}
+      else
+        {:error, msg} when is_binary(msg) ->
+          {:noreply, Phoenix.LiveView.put_flash(socket, :error, msg)}
 
         {:error, _} ->
           {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Failed to create model")}
@@ -1587,17 +1592,19 @@ defmodule LiteskillWeb.ProfileLive do
   def handle_event("update_llm_model", %{"llm_model" => params}, socket) do
     require_admin(socket, fn ->
       id = params["id"]
-      attrs = build_model_attrs(params, socket.assigns.current_user.id)
 
-      case LlmModels.update_model(id, socket.assigns.current_user.id, attrs) do
-        {:ok, _model} ->
-          {:noreply,
-           socket
-           |> Phoenix.Component.assign(
-             llm_models: LlmModels.list_models(socket.assigns.current_user.id),
-             editing_llm_model: nil
-           )
-           |> Phoenix.LiveView.put_flash(:info, "Model updated")}
+      with {:ok, attrs} <- build_model_attrs(params, socket.assigns.current_user.id),
+           {:ok, _model} <- LlmModels.update_model(id, socket.assigns.current_user.id, attrs) do
+        {:noreply,
+         socket
+         |> Phoenix.Component.assign(
+           llm_models: LlmModels.list_models(socket.assigns.current_user.id),
+           editing_llm_model: nil
+         )
+         |> Phoenix.LiveView.put_flash(:info, "Model updated")}
+      else
+        {:error, msg} when is_binary(msg) ->
+          {:noreply, Phoenix.LiveView.put_flash(socket, :error, msg)}
 
         {:error, _} ->
           {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Failed to update model")}
@@ -1624,53 +1631,51 @@ defmodule LiteskillWeb.ProfileLive do
   end
 
   defp build_provider_attrs(params, user_id) do
-    provider_config =
-      case params["provider_config_json"] do
-        nil -> %{}
-        "" -> %{}
-        json -> decode_json_or_empty(json)
-      end
+    with {:ok, provider_config} <- parse_json_config(params["provider_config_json"]) do
+      attrs = %{
+        name: params["name"],
+        provider_type: params["provider_type"],
+        provider_config: provider_config,
+        instance_wide: params["instance_wide"] == "true",
+        status: params["status"] || "active",
+        user_id: user_id
+      }
 
-    attrs = %{
-      name: params["name"],
-      provider_type: params["provider_type"],
-      provider_config: provider_config,
-      instance_wide: params["instance_wide"] == "true",
-      status: params["status"] || "active",
-      user_id: user_id
-    }
+      attrs =
+        case params["api_key"] do
+          nil -> attrs
+          "" -> attrs
+          key -> Map.put(attrs, :api_key, key)
+        end
 
-    case params["api_key"] do
-      nil -> attrs
-      "" -> attrs
-      key -> Map.put(attrs, :api_key, key)
+      {:ok, attrs}
     end
   end
 
   defp build_model_attrs(params, user_id) do
-    model_config =
-      case params["model_config_json"] do
-        nil -> %{}
-        "" -> %{}
-        json -> decode_json_or_empty(json)
-      end
-
-    %{
-      name: params["name"],
-      provider_id: params["provider_id"],
-      model_id: params["model_id"],
-      model_type: params["model_type"] || "inference",
-      model_config: model_config,
-      instance_wide: params["instance_wide"] == "true",
-      status: params["status"] || "active",
-      user_id: user_id
-    }
+    with {:ok, model_config} <- parse_json_config(params["model_config_json"]) do
+      {:ok,
+       %{
+         name: params["name"],
+         provider_id: params["provider_id"],
+         model_id: params["model_id"],
+         model_type: params["model_type"] || "inference",
+         model_config: model_config,
+         instance_wide: params["instance_wide"] == "true",
+         status: params["status"] || "active",
+         user_id: user_id
+       }}
+    end
   end
 
-  defp decode_json_or_empty(json) do
+  defp parse_json_config(nil), do: {:ok, %{}}
+  defp parse_json_config(""), do: {:ok, %{}}
+
+  defp parse_json_config(json) do
     case Jason.decode(json) do
-      {:ok, decoded} when is_map(decoded) -> decoded
-      _ -> %{}
+      {:ok, decoded} when is_map(decoded) -> {:ok, decoded}
+      {:ok, _} -> {:error, "Config must be a JSON object, not an array or scalar"}
+      {:error, _} -> {:error, "Invalid JSON in config field"}
     end
   end
 end

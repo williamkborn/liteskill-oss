@@ -146,6 +146,10 @@ defmodule Liteskill.LLM.StreamHandlerTest do
                stream_fn: fn _model_id, _msgs, _cb, opts ->
                  provider_opts = Keyword.get(opts, :provider_options, [])
                  assert Keyword.get(provider_opts, :api_key) == "test-key"
+                 # model_spec is a plain map, not the full LlmModel struct
+                 model_spec = Keyword.get(opts, :model_spec)
+                 assert model_spec == %{id: "claude-custom", provider: :anthropic}
+                 refute Keyword.has_key?(opts, :llm_model)
                  {:ok, "", []}
                end
              )
