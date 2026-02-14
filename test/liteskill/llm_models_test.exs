@@ -1,5 +1,5 @@
 defmodule Liteskill.LlmModelsTest do
-  use Liteskill.DataCase, async: true
+  use Liteskill.DataCase, async: false
 
   alias Liteskill.Authorization
   alias Liteskill.Authorization.EntityAcl
@@ -580,10 +580,9 @@ defmodule Liteskill.LlmModelsTest do
       assert %Liteskill.LlmModels.LlmModel{} = hd(result)
     end
 
-    test "falls back to hardcoded list when no DB models", %{other: other} do
+    test "returns empty list when no DB models configured", %{other: other} do
       result = Liteskill.LLM.available_models(other.id)
-      assert is_list(result)
-      assert Enum.all?(result, &is_binary/1)
+      assert result == []
     end
 
     test "only returns inference models", %{admin: admin, provider: provider} do

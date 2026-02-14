@@ -121,7 +121,8 @@ defmodule Liteskill.Rag.CohereClient do
       headers: [
         {"authorization", "Bearer #{token}"},
         {"content-type", "application/json"}
-      ]
+      ],
+      retry: false
     )
   end
 

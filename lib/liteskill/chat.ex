@@ -20,16 +20,15 @@ defmodule Liteskill.Chat do
     conversation_id = params[:conversation_id] || Ecto.UUID.generate()
     stream_id = "conversation-#{conversation_id}"
 
-    model_id =
+    {model_id, llm_model_id} =
       case params[:llm_model_id] do
         nil ->
-          params[:model_id]
+          {params[:model_id], nil}
 
         llm_model_id ->
-          case Liteskill.LlmModels.get_model!(llm_model_id) do
-            %{model_id: mid} -> mid
-            # coveralls-ignore-next-line
-            _ -> params[:model_id]
+          case Liteskill.LlmModels.get_model(llm_model_id, params.user_id) do
+            {:ok, %{model_id: mid}} -> {mid, llm_model_id}
+            {:error, _} -> {params[:model_id], nil}
           end
       end
 
@@ -41,7 +40,7 @@ defmodule Liteskill.Chat do
          title: params[:title] || "New Conversation",
          model_id: model_id,
          system_prompt: params[:system_prompt],
-         llm_model_id: params[:llm_model_id]
+         llm_model_id: llm_model_id
        }}
 
     case Loader.execute(ConversationAggregate, stream_id, command) do

@@ -75,6 +75,17 @@ defmodule Liteskill.ChatTest do
       assert conversation.model_id == "us.anthropic.claude-3-5-sonnet"
     end
 
+    test "falls back to model_id param when llm_model_id is not accessible", %{user: user} do
+      assert {:ok, conversation} =
+               Chat.create_conversation(%{
+                 user_id: user.id,
+                 llm_model_id: Ecto.UUID.generate(),
+                 model_id: "fallback-model-id"
+               })
+
+      assert conversation.model_id == "fallback-model-id"
+    end
+
     test "auto-creates owner ACL", %{user: user} do
       {:ok, conv} = Chat.create_conversation(%{user_id: user.id})
 

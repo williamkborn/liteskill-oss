@@ -1658,7 +1658,7 @@ defmodule LiteskillWeb.ProfileLive do
       case params["provider_config_json"] do
         nil -> %{}
         "" -> %{}
-        json -> Jason.decode!(json)
+        json -> decode_json_or_empty(json)
       end
 
     attrs = %{
@@ -1682,7 +1682,7 @@ defmodule LiteskillWeb.ProfileLive do
       case params["model_config_json"] do
         nil -> %{}
         "" -> %{}
-        json -> Jason.decode!(json)
+        json -> decode_json_or_empty(json)
       end
 
     %{
@@ -1695,5 +1695,12 @@ defmodule LiteskillWeb.ProfileLive do
       status: params["status"] || "active",
       user_id: user_id
     }
+  end
+
+  defp decode_json_or_empty(json) do
+    case Jason.decode(json) do
+      {:ok, decoded} when is_map(decoded) -> decoded
+      _ -> %{}
+    end
   end
 end

@@ -1,5 +1,5 @@
 defmodule Liteskill.LlmProvidersTest do
-  use Liteskill.DataCase, async: true
+  use Liteskill.DataCase, async: false
 
   alias Liteskill.Authorization
   alias Liteskill.Authorization.EntityAcl

@@ -6,12 +6,17 @@ defmodule Liteskill.Settings do
   alias Liteskill.Repo
   alias Liteskill.Settings.ServerSettings
 
+  import Ecto.Query
+
   def get do
-    case Repo.one(ServerSettings) do
+    case Repo.one(from s in ServerSettings, limit: 1) do
       nil ->
         %ServerSettings{}
         |> ServerSettings.changeset(%{registration_open: true})
-        |> Repo.insert!()
+        |> Repo.insert!(on_conflict: :nothing)
+
+        # Re-query to handle race: another process may have inserted first
+        Repo.one!(from s in ServerSettings, limit: 1)
 
       settings ->
         settings
