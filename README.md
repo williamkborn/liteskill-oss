@@ -164,27 +164,6 @@ Structured documents with infinitely-nesting sections, rendered as markdown.
 - **ACL sharing** with owner/member roles, similar to conversation access control
 - **Markdown rendering** with `render_markdown/2`, including optional comment output as blockquotes
 
-## API
-
-Liteskill exposes a JSON API under `/api` for programmatic access. All endpoints require session authentication.
-
-| Method   | Path                                      | Description                 |
-|----------|-------------------------------------------|-----------------------------|
-| `GET`    | `/api/conversations`                      | List conversations          |
-| `POST`   | `/api/conversations`                      | Create a conversation       |
-| `GET`    | `/api/conversations/:id`                  | Get conversation + messages |
-| `POST`   | `/api/conversations/:id/messages`         | Send a message              |
-| `POST`   | `/api/conversations/:id/fork`             | Fork at a message position  |
-| `POST`   | `/api/conversations/:id/acls`             | Grant user/group access     |
-| `DELETE` | `/api/conversations/:id/acls/:user_id`    | Revoke access               |
-| `DELETE` | `/api/conversations/:id/membership`       | Leave a shared conversation |
-| `GET`    | `/api/groups`                             | List groups                 |
-| `POST`   | `/api/groups`                             | Create a group              |
-| `GET`    | `/api/groups/:id`                         | Get group details           |
-| `DELETE` | `/api/groups/:id`                         | Delete a group              |
-| `POST`   | `/api/groups/:id/members`                 | Add a member                |
-| `DELETE` | `/api/groups/:id/members/:user_id`        | Remove a member             |
-
 ## Running with Docker
 
 The quickest way to run Liteskill locally. You need [Docker](https://docs.docker.com/get-docker/) with the Compose plugin.
