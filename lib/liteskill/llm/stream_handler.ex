@@ -16,7 +16,6 @@ defmodule Liteskill.LLM.StreamHandler do
   alias Liteskill.Chat.{ConversationAggregate, Projector}
   alias Liteskill.LLM.ToolUtils
   alias Liteskill.Usage
-  alias Liteskill.Usage.CostCalculator
 
   require Logger
 
@@ -740,64 +739,16 @@ defmodule Liteskill.LLM.StreamHandler do
   defp maybe_record_usage(nil, _message_id, _latency_ms, _stop_reason, _opts), do: :ok
 
   defp maybe_record_usage(usage, message_id, latency_ms, _stop_reason, opts) do
-    user_id = Keyword.get(opts, :user_id)
-
-    if user_id do
-      model_id = get_model_id(opts)
-      llm_model = Keyword.get(opts, :llm_model)
-      input_tokens = usage[:input_tokens] || 0
-      output_tokens = usage[:output_tokens] || 0
-
-      {input_cost, output_cost, total_cost} =
-        CostCalculator.resolve_costs(usage, llm_model, input_tokens, output_tokens)
-
-      attrs = %{
-        user_id: user_id,
-        conversation_id: Keyword.get(opts, :conversation_id),
-        message_id: message_id,
-        model_id: model_id,
-        llm_model_id: get_llm_model_id(opts),
-        input_tokens: input_tokens,
-        output_tokens: output_tokens,
-        total_tokens: usage[:total_tokens] || 0,
-        reasoning_tokens: usage[:reasoning_tokens] || 0,
-        cached_tokens: usage[:cached_tokens] || 0,
-        cache_creation_tokens: usage[:cache_creation_tokens] || 0,
-        input_cost: input_cost,
-        output_cost: output_cost,
-        reasoning_cost: CostCalculator.to_decimal(usage[:reasoning_cost]),
-        total_cost: total_cost,
-        latency_ms: latency_ms,
-        call_type: "stream",
-        tool_round: Keyword.get(opts, :tool_round, 0)
-      }
-
-      case Usage.record_usage(attrs) do
-        {:ok, _} ->
-          :ok
-
-        # coveralls-ignore-start
-        {:error, changeset} ->
-          Logger.warning("Failed to record usage: #{inspect(changeset.errors)}")
-          # coveralls-ignore-stop
-      end
-    end
-
-    :ok
-  end
-
-  defp get_model_id(opts) do
-    case Keyword.get(opts, :llm_model) do
-      %{model_id: id} -> id
-      _ -> Keyword.get(opts, :model_id, "unknown")
-    end
-  end
-
-  defp get_llm_model_id(opts) do
-    case Keyword.get(opts, :llm_model) do
-      %{id: id} -> id
-      _ -> nil
-    end
+    Usage.record_from_response(usage,
+      user_id: Keyword.get(opts, :user_id),
+      llm_model: Keyword.get(opts, :llm_model),
+      model_id: Keyword.get(opts, :model_id, "unknown"),
+      conversation_id: Keyword.get(opts, :conversation_id),
+      message_id: message_id,
+      latency_ms: latency_ms,
+      call_type: "stream",
+      tool_round: Keyword.get(opts, :tool_round, 0)
+    )
   end
 
   defp get_in_usage(nil, _key), do: nil

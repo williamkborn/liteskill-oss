@@ -6,6 +6,8 @@ defmodule LiteskillWeb.AdminLive do
 
   use LiteskillWeb, :html
 
+  import LiteskillWeb.FormatHelpers
+
   alias Liteskill.Accounts
   alias Liteskill.Accounts.User
   alias Liteskill.Groups
@@ -1397,36 +1399,6 @@ defmodule LiteskillWeb.AdminLive do
     end
   end
 
-  defp format_cost(nil), do: "$0.00"
-
-  defp format_cost(%Decimal{} = d) do
-    "$#{Decimal.round(d, 4)}"
-  end
-
-  defp format_cost(_), do: "$0.00"
-
-  defp format_decimal(nil), do: "0.00"
-  defp format_decimal(%Decimal{} = d), do: Decimal.to_string(Decimal.round(d, 2))
-  defp format_decimal(_), do: "0.00"
-
-  defp format_number(n) when is_integer(n) and n >= 1_000_000 do
-    "#{Float.round(n / 1_000_000, 1)}M"
-  end
-
-  defp format_number(n) when is_integer(n) and n >= 1_000 do
-    "#{Float.round(n / 1_000, 1)}K"
-  end
-
-  defp format_number(n) when is_integer(n), do: Integer.to_string(n)
-  defp format_number(_), do: "0"
-
-  defp format_percentage(_, 0), do: "—"
-  defp format_percentage(part, whole), do: "#{Float.round(part / whole * 100, 1)}%"
-
-  defp format_date(%DateTime{} = dt), do: Calendar.strftime(dt, "%Y-%m-%d")
-  defp format_date(%NaiveDateTime{} = dt), do: Calendar.strftime(dt, "%Y-%m-%d")
-  defp format_date(_), do: "—"
-
   defp bar_width(_tokens, []), do: 0
 
   defp bar_width(tokens, daily) do
@@ -1866,7 +1838,8 @@ defmodule LiteskillWeb.AdminLive do
     end)
   end
 
-  defp build_provider_attrs(params, user_id) do
+  @doc false
+  def build_provider_attrs(params, user_id) do
     with {:ok, provider_config} <- parse_json_config(params["provider_config_json"]) do
       attrs = %{
         name: params["name"],
@@ -1888,7 +1861,8 @@ defmodule LiteskillWeb.AdminLive do
     end
   end
 
-  defp build_model_attrs(params, user_id) do
+  @doc false
+  def build_model_attrs(params, user_id) do
     with {:ok, model_config} <- parse_json_config(params["model_config_json"]) do
       {:ok,
        %{
@@ -1906,20 +1880,22 @@ defmodule LiteskillWeb.AdminLive do
     end
   end
 
-  defp parse_decimal(nil), do: nil
-  defp parse_decimal(""), do: nil
+  @doc false
+  def parse_decimal(nil), do: nil
+  def parse_decimal(""), do: nil
 
-  defp parse_decimal(val) when is_binary(val) do
+  def parse_decimal(val) when is_binary(val) do
     case Decimal.parse(val) do
       {d, ""} -> d
       _ -> nil
     end
   end
 
-  defp parse_json_config(nil), do: {:ok, %{}}
-  defp parse_json_config(""), do: {:ok, %{}}
+  @doc false
+  def parse_json_config(nil), do: {:ok, %{}}
+  def parse_json_config(""), do: {:ok, %{}}
 
-  defp parse_json_config(json) do
+  def parse_json_config(json) do
     case Jason.decode(json) do
       {:ok, decoded} when is_map(decoded) -> {:ok, decoded}
       {:ok, _} -> {:error, "Config must be a JSON object, not an array or scalar"}

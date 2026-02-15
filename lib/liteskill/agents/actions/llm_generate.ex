@@ -15,7 +15,6 @@ defmodule Liteskill.Agents.Actions.LlmGenerate do
     ]
 
   alias Liteskill.LLM.ToolUtils
-  alias Liteskill.Usage.CostCalculator
 
   require Logger
 
@@ -218,43 +217,15 @@ defmodule Liteskill.Agents.Actions.LlmGenerate do
   # -- Usage recording --
 
   defp record_usage(response, llm_model, state, latency_ms, tool_round) do
-    user_id = state[:user_id]
+    usage = ReqLLM.Response.usage(response) || %{}
 
-    if user_id do
-      usage = ReqLLM.Response.usage(response) || %{}
-      input_tokens = usage[:input_tokens] || 0
-      output_tokens = usage[:output_tokens] || 0
-
-      {input_cost, output_cost, total_cost} =
-        CostCalculator.resolve_costs(usage, llm_model, input_tokens, output_tokens)
-
-      case Liteskill.Usage.record_usage(%{
-             user_id: user_id,
-             run_id: state[:run_id],
-             model_id: llm_model.model_id,
-             llm_model_id: llm_model.id,
-             input_tokens: input_tokens,
-             output_tokens: output_tokens,
-             total_tokens: usage[:total_tokens] || 0,
-             reasoning_tokens: usage[:reasoning_tokens] || 0,
-             cached_tokens: usage[:cached_tokens] || 0,
-             cache_creation_tokens: usage[:cache_creation_tokens] || 0,
-             input_cost: input_cost,
-             output_cost: output_cost,
-             reasoning_cost: CostCalculator.to_decimal(usage[:reasoning_cost]),
-             total_cost: total_cost,
-             latency_ms: latency_ms,
-             call_type: "complete",
-             tool_round: tool_round
-           }) do
-        {:ok, _} ->
-          :ok
-
-        # coveralls-ignore-start
-        {:error, changeset} ->
-          Logger.warning("Failed to record usage: #{inspect(changeset.errors)}")
-          # coveralls-ignore-stop
-      end
-    end
+    Liteskill.Usage.record_from_response(usage,
+      user_id: state[:user_id],
+      llm_model: llm_model,
+      run_id: state[:run_id],
+      latency_ms: latency_ms,
+      call_type: "complete",
+      tool_round: tool_round
+    )
   end
 end

@@ -10,7 +10,10 @@ defmodule Liteskill.Usage do
   import Ecto.Query
 
   alias Liteskill.Repo
+  alias Liteskill.Usage.CostCalculator
   alias Liteskill.Usage.UsageRecord
+
+  require Logger
 
   @doc """
   Records a single LLM API call's usage.
@@ -22,6 +25,86 @@ defmodule Liteskill.Usage do
     |> UsageRecord.changeset(attrs)
     |> Repo.insert()
   end
+
+  @doc """
+  Builds and records a usage record from an API usage map.
+
+  Resolves costs via `CostCalculator`, assembles all fields, and inserts.
+  No-ops (returns `:ok`) when `user_id` is nil.
+
+  ## Options
+
+    * `:user_id` - (required for recording) User who made the call
+    * `:llm_model` - `%LlmModel{}` struct for model_id/rates lookup
+    * `:model_id` - Fallback model ID string (used when no llm_model)
+    * `:conversation_id` - Optional conversation association
+    * `:message_id` - Optional message association
+    * `:run_id` - Optional run association
+    * `:call_type` - `"stream"` or `"complete"` (required)
+    * `:latency_ms` - Response latency in milliseconds
+    * `:tool_round` - Tool calling round number (default 0)
+  """
+  def record_from_response(usage, opts) when is_map(usage) and is_list(opts) do
+    user_id = Keyword.get(opts, :user_id)
+
+    if user_id do
+      llm_model = Keyword.get(opts, :llm_model)
+      input_tokens = usage[:input_tokens] || 0
+      output_tokens = usage[:output_tokens] || 0
+
+      {input_cost, output_cost, total_cost} =
+        CostCalculator.resolve_costs(usage, llm_model, input_tokens, output_tokens)
+
+      model_id =
+        case llm_model do
+          %{model_id: id} -> id
+          _ -> Keyword.get(opts, :model_id, "unknown")
+        end
+
+      llm_model_id =
+        case llm_model do
+          %{id: id} -> id
+          _ -> nil
+        end
+
+      attrs = %{
+        user_id: user_id,
+        conversation_id: Keyword.get(opts, :conversation_id),
+        message_id: Keyword.get(opts, :message_id),
+        run_id: Keyword.get(opts, :run_id),
+        model_id: model_id,
+        llm_model_id: llm_model_id,
+        input_tokens: input_tokens,
+        output_tokens: output_tokens,
+        total_tokens: usage[:total_tokens] || 0,
+        reasoning_tokens: usage[:reasoning_tokens] || 0,
+        cached_tokens: usage[:cached_tokens] || 0,
+        cache_creation_tokens: usage[:cache_creation_tokens] || 0,
+        input_cost: input_cost,
+        output_cost: output_cost,
+        reasoning_cost: CostCalculator.to_decimal(usage[:reasoning_cost]),
+        total_cost: total_cost,
+        latency_ms: Keyword.get(opts, :latency_ms),
+        call_type: Keyword.fetch!(opts, :call_type),
+        tool_round: Keyword.get(opts, :tool_round, 0)
+      }
+
+      case record_usage(attrs) do
+        {:ok, _} ->
+          :ok
+
+        # coveralls-ignore-start
+        {:error, changeset} ->
+          Logger.warning("Failed to record usage: #{inspect(changeset.errors)}")
+          :ok
+          # coveralls-ignore-stop
+      end
+    else
+      :ok
+    end
+  end
+
+  def record_from_response(nil, _opts), do: :ok
 
   @doc """
   Returns aggregated usage for a conversation.

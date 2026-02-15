@@ -85,6 +85,119 @@ defmodule Liteskill.UsageTest do
     end
   end
 
+  describe "record_from_response/2" do
+    test "records usage with all fields from API usage map", %{user: user, conversation: conv} do
+      usage = %{
+        input_tokens: 100,
+        output_tokens: 50,
+        total_tokens: 150,
+        reasoning_tokens: 10,
+        cached_tokens: 5,
+        cache_creation_tokens: 2,
+        input_cost: 0.003,
+        output_cost: 0.0075,
+        total_cost: 0.0105
+      }
+
+      assert :ok =
+               Usage.record_from_response(usage,
+                 user_id: user.id,
+                 conversation_id: conv.id,
+                 model_id: "test-model",
+                 call_type: "stream",
+                 latency_ms: 500
+               )
+
+      records = Repo.all(UsageRecord)
+      assert length(records) == 1
+
+      record = hd(records)
+      assert record.user_id == user.id
+      assert record.conversation_id == conv.id
+      assert record.model_id == "test-model"
+      assert record.input_tokens == 100
+      assert record.output_tokens == 50
+      assert record.call_type == "stream"
+      assert record.latency_ms == 500
+    end
+
+    test "extracts model_id from llm_model struct", %{user: user} do
+      llm_model = %Liteskill.LlmModels.LlmModel{
+        model_id: "claude-from-struct",
+        provider: %Liteskill.LlmProviders.LlmProvider{
+          provider_type: "anthropic",
+          api_key: "k",
+          provider_config: %{}
+        }
+      }
+
+      assert :ok =
+               Usage.record_from_response(%{input_tokens: 10, output_tokens: 5, total_tokens: 15},
+                 user_id: user.id,
+                 llm_model: llm_model,
+                 call_type: "complete"
+               )
+
+      record = Repo.one!(UsageRecord)
+      assert record.model_id == "claude-from-struct"
+    end
+
+    test "no-ops when user_id is nil" do
+      assert :ok =
+               Usage.record_from_response(%{input_tokens: 10},
+                 user_id: nil,
+                 call_type: "stream"
+               )
+
+      assert Repo.all(UsageRecord) == []
+    end
+
+    test "no-ops when usage is nil" do
+      assert :ok = Usage.record_from_response(nil, user_id: "some-id", call_type: "stream")
+    end
+
+    test "calculates costs from model rates when API returns no costs", %{user: user} do
+      llm_model = %Liteskill.LlmModels.LlmModel{
+        model_id: "rated-model",
+        input_cost_per_million: Decimal.new("3"),
+        output_cost_per_million: Decimal.new("15"),
+        provider: %Liteskill.LlmProviders.LlmProvider{
+          provider_type: "anthropic",
+          api_key: "k",
+          provider_config: %{}
+        }
+      }
+
+      assert :ok =
+               Usage.record_from_response(
+                 %{input_tokens: 1_000_000, output_tokens: 500_000, total_tokens: 1_500_000},
+                 user_id: user.id,
+                 llm_model: llm_model,
+                 call_type: "complete"
+               )
+
+      record = Repo.one!(UsageRecord)
+      assert Decimal.equal?(record.input_cost, Decimal.new("3"))
+      assert Decimal.equal?(record.output_cost, Decimal.new("7.5"))
+      assert Decimal.equal?(record.total_cost, Decimal.new("10.5"))
+    end
+
+    test "passes through run_id and message_id", %{user: user} do
+      msg_id = Ecto.UUID.generate()
+
+      assert :ok =
+               Usage.record_from_response(%{input_tokens: 1, total_tokens: 1},
+                 user_id: user.id,
+                 message_id: msg_id,
+                 model_id: "test",
+                 call_type: "stream"
+               )
+
+      record = Repo.one!(UsageRecord)
+      assert record.message_id == msg_id
+    end
+  end
+
   describe "usage_by_conversation/1" do
     test "returns aggregated usage for a conversation", %{user: user, conversation: conv} do
       Usage.record_usage(

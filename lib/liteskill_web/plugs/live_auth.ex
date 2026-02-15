@@ -31,6 +31,26 @@ defmodule LiteskillWeb.Plugs.LiveAuth do
     end
   end
 
+  def on_mount(:require_admin, _params, session, socket) do
+    case session["user_id"] do
+      nil ->
+        {:halt, redirect(socket, to: "/login")}
+
+      user_id ->
+        case Accounts.get_user(user_id) do
+          nil ->
+            {:halt, redirect(socket, to: "/login")}
+
+          user ->
+            if User.admin?(user) do
+              {:cont, assign(socket, :current_user, user)}
+            else
+              {:halt, redirect(socket, to: "/")}
+            end
+        end
+    end
+  end
+
   def on_mount(:require_setup_needed, _params, _session, socket) do
     admin = Accounts.get_user_by_email(User.admin_email())
 

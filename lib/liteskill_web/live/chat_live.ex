@@ -1,6 +1,8 @@
 defmodule LiteskillWeb.ChatLive do
   use LiteskillWeb, :live_view
 
+  import LiteskillWeb.FormatHelpers, only: [format_cost: 1, format_number: 1]
+
   alias Liteskill.Chat
   alias Liteskill.Chat.{MessageBuilder, ToolCall}
   alias Liteskill.LLM.StreamHandler
@@ -2073,19 +2075,19 @@ defmodule LiteskillWeb.ChatLive do
             <div class="text-center p-3 bg-base-200 rounded-lg">
               <div class="text-xs text-base-content/60">Input Cost</div>
               <div class="text-lg font-bold">
-                {format_usage_cost(@usage_modal_data.totals.input_cost)}
+                {format_cost(@usage_modal_data.totals.input_cost)}
               </div>
             </div>
             <div class="text-center p-3 bg-base-200 rounded-lg">
               <div class="text-xs text-base-content/60">Output Cost</div>
               <div class="text-lg font-bold">
-                {format_usage_cost(@usage_modal_data.totals.output_cost)}
+                {format_cost(@usage_modal_data.totals.output_cost)}
               </div>
             </div>
             <div class="text-center p-3 bg-base-200 rounded-lg">
               <div class="text-xs text-base-content/60">Total Cost</div>
               <div class="text-lg font-bold">
-                {format_usage_cost(@usage_modal_data.totals.total_cost)}
+                {format_cost(@usage_modal_data.totals.total_cost)}
               </div>
             </div>
           </div>
@@ -2093,19 +2095,19 @@ defmodule LiteskillWeb.ChatLive do
           <div class="text-sm text-base-content/60 grid grid-cols-3 gap-3">
             <div class="text-center">
               <span class="font-mono">
-                {format_usage_tokens(@usage_modal_data.totals.input_tokens)}
+                {format_number(@usage_modal_data.totals.input_tokens)}
               </span>
               <span class="ml-1">in</span>
             </div>
             <div class="text-center">
               <span class="font-mono">
-                {format_usage_tokens(@usage_modal_data.totals.output_tokens)}
+                {format_number(@usage_modal_data.totals.output_tokens)}
               </span>
               <span class="ml-1">out</span>
             </div>
             <div class="text-center">
               <span class="font-mono">
-                {format_usage_tokens(@usage_modal_data.totals.total_tokens)}
+                {format_number(@usage_modal_data.totals.total_tokens)}
               </span>
               <span class="ml-1">total</span>
             </div>
@@ -2127,9 +2129,9 @@ defmodule LiteskillWeb.ChatLive do
               <tbody>
                 <tr :for={row <- @usage_modal_data.by_model}>
                   <td class="font-mono text-xs max-w-[200px] truncate">{row.model_id}</td>
-                  <td class="text-right">{format_usage_cost(row.input_cost)}</td>
-                  <td class="text-right">{format_usage_cost(row.output_cost)}</td>
-                  <td class="text-right">{format_usage_cost(row.total_cost)}</td>
+                  <td class="text-right">{format_cost(row.input_cost)}</td>
+                  <td class="text-right">{format_cost(row.output_cost)}</td>
+                  <td class="text-right">{format_cost(row.total_cost)}</td>
                   <td class="text-right">{row.call_count}</td>
                 </tr>
               </tbody>
@@ -3953,19 +3955,6 @@ defmodule LiteskillWeb.ChatLive do
       edit_auto_confirm_tools: true
     )
   end
-
-  defp format_usage_cost(nil), do: "$0.00"
-  defp format_usage_cost(%Decimal{} = d), do: "$#{Decimal.round(d, 4)}"
-  defp format_usage_cost(_), do: "$0.00"
-
-  defp format_usage_tokens(n) when is_integer(n) and n >= 1_000_000,
-    do: "#{Float.round(n / 1_000_000, 1)}M"
-
-  defp format_usage_tokens(n) when is_integer(n) and n >= 1_000,
-    do: "#{Float.round(n / 1_000, 1)}K"
-
-  defp format_usage_tokens(n) when is_integer(n), do: Integer.to_string(n)
-  defp format_usage_tokens(_), do: "0"
 
   defp display_messages(messages, nil), do: messages
 

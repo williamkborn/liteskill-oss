@@ -5,6 +5,8 @@ defmodule LiteskillWeb.AgentStudioComponents do
 
   use LiteskillWeb, :html
 
+  import LiteskillWeb.FormatHelpers, only: [format_cost: 1, format_number: 1]
+
   alias Liteskill.Agents.AgentDefinition
   alias Liteskill.Teams.TeamDefinition
   alias Liteskill.Runs.Run
@@ -1370,30 +1372,30 @@ defmodule LiteskillWeb.AgentStudioComponents do
           <div class="grid grid-cols-3 gap-4 mb-4">
             <div class="bg-base-200 rounded-lg p-4 text-center">
               <p class="text-xs text-base-content/50 mb-1">Input Cost</p>
-              <p class="text-lg font-bold">{format_run_cost(@run_usage.input_cost)}</p>
+              <p class="text-lg font-bold">{format_cost(@run_usage.input_cost)}</p>
             </div>
             <div class="bg-base-200 rounded-lg p-4 text-center">
               <p class="text-xs text-base-content/50 mb-1">Output Cost</p>
-              <p class="text-lg font-bold">{format_run_cost(@run_usage.output_cost)}</p>
+              <p class="text-lg font-bold">{format_cost(@run_usage.output_cost)}</p>
             </div>
             <div class="bg-base-200 rounded-lg p-4 text-center">
               <p class="text-xs text-base-content/50 mb-1">Total Cost</p>
-              <p class="text-lg font-bold text-primary">{format_run_cost(@run_usage.total_cost)}</p>
+              <p class="text-lg font-bold text-primary">{format_cost(@run_usage.total_cost)}</p>
             </div>
           </div>
           <div class="bg-base-200 rounded-lg p-4 mb-4">
             <div class="grid grid-cols-4 gap-4 text-center text-sm">
               <div>
                 <p class="text-xs text-base-content/50">Input Tokens</p>
-                <p class="font-semibold">{format_run_tokens(@run_usage.input_tokens)}</p>
+                <p class="font-semibold">{format_number(@run_usage.input_tokens)}</p>
               </div>
               <div>
                 <p class="text-xs text-base-content/50">Output Tokens</p>
-                <p class="font-semibold">{format_run_tokens(@run_usage.output_tokens)}</p>
+                <p class="font-semibold">{format_number(@run_usage.output_tokens)}</p>
               </div>
               <div>
                 <p class="text-xs text-base-content/50">Total Tokens</p>
-                <p class="font-semibold">{format_run_tokens(@run_usage.total_tokens)}</p>
+                <p class="font-semibold">{format_number(@run_usage.total_tokens)}</p>
               </div>
               <div>
                 <p class="text-xs text-base-content/50">API Calls</p>
@@ -1418,12 +1420,12 @@ defmodule LiteskillWeb.AgentStudioComponents do
               <tbody>
                 <tr :for={row <- @run_usage_by_model}>
                   <td class="font-mono text-xs">{row.model_id}</td>
-                  <td class="text-right">{format_run_tokens(row.input_tokens)}</td>
-                  <td class="text-right">{format_run_tokens(row.output_tokens)}</td>
-                  <td class="text-right">{format_run_tokens(row.total_tokens)}</td>
-                  <td class="text-right">{format_run_cost(row.input_cost)}</td>
-                  <td class="text-right">{format_run_cost(row.output_cost)}</td>
-                  <td class="text-right font-semibold">{format_run_cost(row.total_cost)}</td>
+                  <td class="text-right">{format_number(row.input_tokens)}</td>
+                  <td class="text-right">{format_number(row.output_tokens)}</td>
+                  <td class="text-right">{format_number(row.total_tokens)}</td>
+                  <td class="text-right">{format_cost(row.input_cost)}</td>
+                  <td class="text-right">{format_cost(row.output_cost)}</td>
+                  <td class="text-right font-semibold">{format_cost(row.total_cost)}</td>
                   <td class="text-right">{row.call_count}</td>
                 </tr>
               </tbody>
@@ -1801,17 +1803,4 @@ defmodule LiteskillWeb.AgentStudioComponents do
 
     db_entries ++ builtin_entries
   end
-
-  defp format_run_cost(nil), do: "$0.00"
-  defp format_run_cost(%Decimal{} = d), do: "$#{Decimal.round(d, 4)}"
-  defp format_run_cost(_), do: "$0.00"
-
-  defp format_run_tokens(n) when is_integer(n) and n >= 1_000_000,
-    do: "#{Float.round(n / 1_000_000, 1)}M"
-
-  defp format_run_tokens(n) when is_integer(n) and n >= 1_000,
-    do: "#{Float.round(n / 1_000, 1)}K"
-
-  defp format_run_tokens(n) when is_integer(n), do: Integer.to_string(n)
-  defp format_run_tokens(_), do: "0"
 end

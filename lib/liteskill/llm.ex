@@ -12,9 +12,6 @@ defmodule Liteskill.LLM do
 
   alias Liteskill.LLM.StreamHandler
   alias Liteskill.Usage
-  alias Liteskill.Usage.CostCalculator
-
-  require Logger
 
   @doc """
   Sends a non-streaming completion request.
@@ -89,54 +86,16 @@ defmodule Liteskill.LLM do
   # coveralls-ignore-stop
 
   defp maybe_record_complete_usage(response, model, opts) do
-    user_id = Keyword.get(opts, :user_id)
+    usage = ReqLLM.Response.usage(response) || %{}
+    model_id = if is_map(model), do: model[:id], else: to_string(model)
 
-    if user_id do
-      usage = ReqLLM.Response.usage(response) || %{}
-      model_id = if is_map(model), do: model[:id], else: to_string(model)
-
-      llm_model = Keyword.get(opts, :llm_model)
-
-      llm_model_id =
-        case llm_model do
-          %{id: id} -> id
-          _ -> nil
-        end
-
-      input_tokens = usage[:input_tokens] || 0
-      output_tokens = usage[:output_tokens] || 0
-
-      {input_cost, output_cost, total_cost} =
-        CostCalculator.resolve_costs(usage, llm_model, input_tokens, output_tokens)
-
-      attrs = %{
-        user_id: user_id,
-        conversation_id: Keyword.get(opts, :conversation_id),
-        model_id: model_id || "unknown",
-        llm_model_id: llm_model_id,
-        input_tokens: input_tokens,
-        output_tokens: output_tokens,
-        total_tokens: usage[:total_tokens] || 0,
-        reasoning_tokens: usage[:reasoning_tokens] || 0,
-        cached_tokens: usage[:cached_tokens] || 0,
-        cache_creation_tokens: usage[:cache_creation_tokens] || 0,
-        input_cost: input_cost,
-        output_cost: output_cost,
-        reasoning_cost: CostCalculator.to_decimal(usage[:reasoning_cost]),
-        total_cost: total_cost,
-        call_type: "complete"
-      }
-
-      case Usage.record_usage(attrs) do
-        {:ok, _} ->
-          :ok
-
-        # coveralls-ignore-start
-        {:error, changeset} ->
-          Logger.warning("Failed to record usage: #{inspect(changeset.errors)}")
-          # coveralls-ignore-stop
-      end
-    end
+    Usage.record_from_response(usage,
+      user_id: Keyword.get(opts, :user_id),
+      llm_model: Keyword.get(opts, :llm_model),
+      model_id: model_id || "unknown",
+      conversation_id: Keyword.get(opts, :conversation_id),
+      call_type: "complete"
+    )
   end
 
   @doc """

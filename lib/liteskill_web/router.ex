@@ -51,6 +51,22 @@ defmodule LiteskillWeb.Router do
     end
   end
 
+  # Admin LiveView routes (require admin role)
+  scope "/", LiteskillWeb do
+    pipe_through [:browser]
+
+    live_session :admin,
+      on_mount: [{LiteskillWeb.Plugs.LiveAuth, :require_admin}] do
+      live "/admin", ChatLive, :admin_usage
+      live "/admin/usage", ChatLive, :admin_usage
+      live "/admin/servers", ChatLive, :admin_servers
+      live "/admin/users", ChatLive, :admin_users
+      live "/admin/groups", ChatLive, :admin_groups
+      live "/admin/providers", ChatLive, :admin_providers
+      live "/admin/models", ChatLive, :admin_models
+    end
+  end
+
   # Authenticated LiveView routes
   scope "/", LiteskillWeb do
     pipe_through [:browser]
@@ -62,13 +78,6 @@ defmodule LiteskillWeb.Router do
       live "/c/:conversation_id", ChatLive, :show
       live "/profile", ChatLive, :info
       live "/profile/password", ChatLive, :password
-      live "/admin", ChatLive, :admin_usage
-      live "/admin/usage", ChatLive, :admin_usage
-      live "/admin/servers", ChatLive, :admin_servers
-      live "/admin/users", ChatLive, :admin_users
-      live "/admin/groups", ChatLive, :admin_groups
-      live "/admin/providers", ChatLive, :admin_providers
-      live "/admin/models", ChatLive, :admin_models
       live "/wiki", ChatLive, :wiki
       live "/wiki/:document_id", ChatLive, :wiki_page_show
       live "/sources", ChatLive, :sources
