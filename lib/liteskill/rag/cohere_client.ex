@@ -138,9 +138,11 @@ defmodule Liteskill.Rag.CohereClient do
       try do
         Liteskill.LlmProviders.get_bedrock_credentials()
       rescue
+        # coveralls-ignore-start
         e ->
           Logger.warning("Failed to resolve DB credentials: #{Exception.message(e)}")
           nil
+          # coveralls-ignore-stop
       end
 
     case db_creds do

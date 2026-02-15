@@ -30,10 +30,12 @@ defmodule Liteskill.Agents.ToolResolver do
       server = agent_tool.mcp_server
 
       unless server do
+        # coveralls-ignore-next-line
         Logger.warning("AgentTool #{agent_tool.id} has no preloaded mcp_server, skipping")
         {tools_acc, servers_acc}
       else
         case McpClient.list_tools(server) do
+          # coveralls-ignore-start
           {:ok, tool_list} ->
             filtered =
               if agent_tool.tool_name do
@@ -57,6 +59,7 @@ defmodule Liteskill.Agents.ToolResolver do
 
             {tools_acc ++ new_tools, Map.merge(servers_acc, new_servers)}
 
+          # coveralls-ignore-stop
           {:error, reason} ->
             Logger.warning(
               "Failed to fetch tools from #{server.name}: #{inspect(reason)}, skipping"

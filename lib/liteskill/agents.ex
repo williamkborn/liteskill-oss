@@ -15,20 +15,12 @@ defmodule Liteskill.Agents do
   # --- CRUD ---
 
   def create_agent(attrs) do
-    Repo.transaction(fn ->
-      case %AgentDefinition{}
-           |> AgentDefinition.changeset(attrs)
-           |> Repo.insert() do
-        {:ok, agent} ->
-          {:ok, _} =
-            Authorization.create_owner_acl("agent_definition", agent.id, agent.user_id)
-
-          Repo.preload(agent, [:llm_model, agent_tools: :mcp_server])
-
-        {:error, changeset} ->
-          Repo.rollback(changeset)
-      end
-    end)
+    %AgentDefinition{}
+    |> AgentDefinition.changeset(attrs)
+    |> Authorization.create_with_owner_acl("agent_definition", [
+      :llm_model,
+      agent_tools: :mcp_server
+    ])
   end
 
   def update_agent(id, user_id, attrs) do

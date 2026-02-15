@@ -358,24 +358,9 @@ defmodule LiteskillWeb.ChatLive do
     ReportsLive.apply_reports_action(socket, action, params)
   end
 
-  defp apply_action(socket, action, params)
-       when action in [
-              :agents,
-              :agent_new,
-              :agent_show,
-              :agent_edit,
-              :teams,
-              :team_new,
-              :team_show,
-              :team_edit,
-              :runs,
-              :run_new,
-              :run_show,
-              :run_log_show,
-              :schedules,
-              :schedule_new,
-              :schedule_show
-            ] do
+  @studio_actions AgentStudioLive.studio_actions()
+
+  defp apply_action(socket, action, params) when action in @studio_actions do
     maybe_unsubscribe(socket)
     AgentStudioLive.apply_studio_action(socket, action, params)
   end
@@ -2379,7 +2364,7 @@ defmodule LiteskillWeb.ChatLive do
   @studio_events ~w(save_agent confirm_delete_agent cancel_delete_agent
     add_agent_tool remove_agent_tool
     save_team confirm_delete_team cancel_delete_team add_team_member remove_team_member
-    save_run start_run rerun confirm_delete_run cancel_delete_run
+    save_run start_run rerun cancel_run confirm_delete_run cancel_delete_run
     save_schedule toggle_schedule confirm_delete_schedule cancel_delete_schedule)
 
   @impl true

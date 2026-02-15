@@ -41,6 +41,10 @@ defmodule Liteskill.Application do
         Liteskill.Chat.Projector,
         # Periodic sweep for conversations stuck in streaming status
         Liteskill.Chat.StreamRecovery,
+        # Schedule tick — checks for due schedules and enqueues runs
+        # coveralls-ignore-start
+        if(@env != :test, do: Liteskill.Schedules.ScheduleTick),
+        # coveralls-ignore-stop
         # Start to serve requests, typically the last entry
         LiteskillWeb.Endpoint
       ]

@@ -1291,6 +1291,15 @@ defmodule LiteskillWeb.AgentStudioComponents do
           <.icon name="hero-play-micro" class="size-4" /> Run
         </button>
         <button
+          :if={@run.status == "running" && @run.user_id == @current_user.id}
+          phx-click="cancel_run"
+          phx-value-id={@run.id}
+          class="btn btn-warning btn-sm ml-auto"
+          data-confirm="Cancel this run?"
+        >
+          <.icon name="hero-stop-micro" class="size-4" /> Cancel
+        </button>
+        <button
           :if={
             @run.status != "pending" &&
               @run.status != "running" &&

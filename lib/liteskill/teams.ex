@@ -14,20 +14,9 @@ defmodule Liteskill.Teams do
   # --- CRUD ---
 
   def create_team(attrs) do
-    Repo.transaction(fn ->
-      case %TeamDefinition{}
-           |> TeamDefinition.changeset(attrs)
-           |> Repo.insert() do
-        {:ok, team} ->
-          {:ok, _} =
-            Authorization.create_owner_acl("team_definition", team.id, team.user_id)
-
-          Repo.preload(team, team_members: :agent_definition)
-
-        {:error, changeset} ->
-          Repo.rollback(changeset)
-      end
-    end)
+    %TeamDefinition{}
+    |> TeamDefinition.changeset(attrs)
+    |> Authorization.create_with_owner_acl("team_definition", team_members: :agent_definition)
   end
 
   def update_team(id, user_id, attrs) do

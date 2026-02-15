@@ -258,6 +258,33 @@ defmodule Liteskill.Authorization do
   def authorize_owner(%{user_id: owner_id} = entity, owner_id), do: {:ok, entity}
   def authorize_owner(%{user_id: _}, _user_id), do: {:error, :forbidden}
 
+  # --- Transactional Create with Owner ACL ---
+
+  @doc """
+  Inserts a changeset inside a transaction, creates an owner ACL for the
+  resulting entity, and preloads the given associations.
+
+  Designed to be used in a pipe: `changeset |> create_with_owner_acl(entity_type, preloads)`.
+
+  Returns `{:ok, entity}` or `{:error, changeset}`.
+
+  ## Example
+
+      changeset |> Authorization.create_with_owner_acl("agent_definition", [:llm_model])
+  """
+  def create_with_owner_acl(changeset, entity_type, preloads \\ []) do
+    Repo.transaction(fn ->
+      case Repo.insert(changeset) do
+        {:ok, entity} ->
+          {:ok, _} = create_owner_acl(entity_type, entity.id, entity.user_id)
+          Repo.preload(entity, preloads)
+
+        {:error, changeset} ->
+          Repo.rollback(changeset)
+      end
+    end)
+  end
+
   # --- Ownership Verification ---
 
   @schema_map %{

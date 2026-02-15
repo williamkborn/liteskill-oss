@@ -25,11 +25,13 @@ defmodule LiteskillWeb.AgentStudioLive do
     :runs,
     :run_new,
     :run_show,
+    :run_log_show,
     :schedules,
     :schedule_new,
     :schedule_show
   ]
 
+  def studio_actions, do: @studio_actions
   def studio_action?(action), do: action in @studio_actions
 
   def studio_assigns do

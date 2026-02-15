@@ -273,4 +273,122 @@ defmodule Liteskill.SchedulesTest do
       assert changeset.valid?
     end
   end
+
+  describe "list_due_schedules/1" do
+    test "returns enabled schedules with past next_run_at", %{owner: owner} do
+      past = DateTime.add(DateTime.utc_now(), -120, :second)
+
+      {:ok, schedule} =
+        Schedules.create_schedule(schedule_attrs(owner, %{cron_expression: "*/5 * * * *"}))
+
+      {:ok, _} =
+        Schedules.update_schedule(schedule.id, owner.id, %{next_run_at: past})
+
+      due = Schedules.list_due_schedules(DateTime.utc_now())
+      ids = Enum.map(due, & &1.id)
+      assert schedule.id in ids
+    end
+
+    test "excludes disabled schedules", %{owner: owner} do
+      past = DateTime.add(DateTime.utc_now(), -120, :second)
+
+      {:ok, schedule} =
+        Schedules.create_schedule(schedule_attrs(owner, %{cron_expression: "*/5 * * * *"}))
+
+      {:ok, _} =
+        Schedules.update_schedule(schedule.id, owner.id, %{next_run_at: past})
+
+      Schedules.toggle_schedule(schedule.id, owner.id)
+
+      due = Schedules.list_due_schedules(DateTime.utc_now())
+      ids = Enum.map(due, & &1.id)
+      refute schedule.id in ids
+    end
+
+    test "excludes schedules with future next_run_at", %{owner: owner} do
+      future = DateTime.add(DateTime.utc_now(), 3600, :second)
+
+      {:ok, schedule} =
+        Schedules.create_schedule(schedule_attrs(owner, %{cron_expression: "*/5 * * * *"}))
+
+      {:ok, _} =
+        Schedules.update_schedule(schedule.id, owner.id, %{next_run_at: future})
+
+      due = Schedules.list_due_schedules(DateTime.utc_now())
+      ids = Enum.map(due, & &1.id)
+      refute schedule.id in ids
+    end
+
+    test "auto-populates next_run_at on create (excludes future schedules)", %{owner: owner} do
+      {:ok, schedule} =
+        Schedules.create_schedule(schedule_attrs(owner, %{cron_expression: "*/5 * * * *"}))
+
+      # next_run_at is auto-populated to the next matching time (in the future)
+      assert schedule.next_run_at != nil
+
+      due = Schedules.list_due_schedules(DateTime.utc_now())
+      assert due == []
+    end
+  end
+
+  describe "compute_next_run/3" do
+    test "computes next run for every-5-minutes cron" do
+      from = ~U[2026-02-14 10:00:00Z]
+      result = Schedules.compute_next_run("*/5 * * * *", "UTC", from)
+      assert result == ~U[2026-02-14 10:05:00Z]
+    end
+
+    test "computes next run for hourly cron" do
+      from = ~U[2026-02-14 10:30:00Z]
+      result = Schedules.compute_next_run("0 * * * *", "UTC", from)
+      assert result == ~U[2026-02-14 11:00:00Z]
+    end
+
+    test "computes next run for daily at midnight" do
+      from = ~U[2026-02-14 23:59:00Z]
+      result = Schedules.compute_next_run("0 0 * * *", "UTC", from)
+      assert result == ~U[2026-02-15 00:00:00Z]
+    end
+
+    test "computes next run for specific day of week (Monday = 1)" do
+      # 2026-02-14 is a Saturday
+      from = ~U[2026-02-14 10:00:00Z]
+      result = Schedules.compute_next_run("0 9 * * 1", "UTC", from)
+      # Next Monday is 2026-02-16
+      assert result == ~U[2026-02-16 09:00:00Z]
+    end
+
+    test "returns nil for invalid cron expression" do
+      result = Schedules.compute_next_run("invalid", "UTC", ~U[2026-02-14 10:00:00Z])
+      assert result == nil
+    end
+
+    test "handles comma-separated values" do
+      from = ~U[2026-02-14 10:00:00Z]
+      result = Schedules.compute_next_run("0,30 * * * *", "UTC", from)
+      assert result == ~U[2026-02-14 10:30:00Z]
+    end
+
+    test "treats non-integer single field as wildcard" do
+      from = ~U[2026-02-14 10:00:00Z]
+      # "abc" is not a valid integer, so parse_field returns :any (wildcard)
+      result = Schedules.compute_next_run("0 abc * * *", "UTC", from)
+      # Treated as "0 * * * *" — next match is 11:00
+      assert result == ~U[2026-02-14 11:00:00Z]
+    end
+
+    test "filters non-integer values in comma-separated field" do
+      from = ~U[2026-02-14 10:00:00Z]
+      # "abc" is filtered out, "30" is kept
+      result = Schedules.compute_next_run("abc,30 * * * *", "UTC", from)
+      assert result == ~U[2026-02-14 10:30:00Z]
+    end
+
+    test "computes next run with non-UTC timezone" do
+      from = ~U[2026-02-14 15:00:00Z]
+      # 15:00 UTC = 10:00 EST. Next 9:00 EST = next day 14:00 UTC
+      result = Schedules.compute_next_run("0 9 * * *", "America/New_York", from)
+      assert result == ~U[2026-02-15 14:00:00Z]
+    end
+  end
 end

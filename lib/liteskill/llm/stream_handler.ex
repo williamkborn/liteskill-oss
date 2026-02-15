@@ -14,7 +14,7 @@ defmodule Liteskill.LLM.StreamHandler do
 
   alias Liteskill.Aggregate.Loader
   alias Liteskill.Chat.{ConversationAggregate, Projector}
-  alias Liteskill.McpServers.Client, as: McpClient
+  alias Liteskill.LLM.ToolUtils
 
   require Logger
 
@@ -308,15 +308,7 @@ defmodule Liteskill.LLM.StreamHandler do
     end
   end
 
-  defp convert_tool(%{"toolSpec" => spec}) do
-    ReqLLM.tool(
-      name: spec["name"],
-      description: spec["description"] || "",
-      parameter_schema: get_in(spec, ["inputSchema", "json"]) || %{},
-      # coveralls-ignore-next-line
-      callback: fn _args -> {:ok, nil} end
-    )
-  end
+  defp convert_tool(tool_spec), do: ToolUtils.convert_tool(tool_spec)
 
   @doc false
   def extract_error_message(%{status: status, response_body: rb})
@@ -435,20 +427,9 @@ defmodule Liteskill.LLM.StreamHandler do
 
   @doc """
   Formats tool execution output into a string for inclusion in
-  conversation messages.
+  conversation messages. Delegates to `ToolUtils.format_tool_output/1`.
   """
-  def format_tool_output({:ok, %{"content" => content}}) when is_list(content) do
-    content
-    |> Enum.map(fn
-      %{"text" => text} -> text
-      other -> Jason.encode!(other)
-    end)
-    |> Enum.join("\n")
-  end
-
-  def format_tool_output({:ok, data}) when is_map(data), do: Jason.encode!(data)
-  def format_tool_output({:ok, data}), do: inspect(data)
-  def format_tool_output({:error, _err}), do: "Error: tool execution failed"
+  defdelegate format_tool_output(result), to: ToolUtils
 
   # -- Tool call handling --
 
@@ -592,22 +573,7 @@ defmodule Liteskill.LLM.StreamHandler do
 
   defp execute_and_record_tool_call(stream_id, message_id, server, tc, opts) do
     start_time = System.monotonic_time(:millisecond)
-    req_opts = Keyword.take(opts, [:plug])
-
-    result =
-      case server do
-        %{builtin: module} ->
-          context = Keyword.take(opts, [:user_id])
-          module.call_tool(tc.name, tc.input, context)
-
-        server when not is_nil(server) ->
-          # coveralls-ignore-next-line
-          McpClient.call_tool(server, tc.name, tc.input, req_opts)
-
-        nil ->
-          {:error, "No server configured for tool #{tc.name}"}
-      end
-
+    result = ToolUtils.execute_tool(server, tc.name, tc.input, opts)
     duration_ms = System.monotonic_time(:millisecond) - start_time
 
     output =

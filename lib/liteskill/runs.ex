@@ -15,20 +15,9 @@ defmodule Liteskill.Runs do
   # --- CRUD ---
 
   def create_run(attrs) do
-    Repo.transaction(fn ->
-      case %Run{}
-           |> Run.changeset(attrs)
-           |> Repo.insert() do
-        {:ok, run} ->
-          {:ok, _} =
-            Authorization.create_owner_acl("run", run.id, run.user_id)
-
-          Repo.preload(run, [:team_definition, :run_tasks, :run_logs])
-
-        {:error, changeset} ->
-          Repo.rollback(changeset)
-      end
-    end)
+    %Run{}
+    |> Run.changeset(attrs)
+    |> Authorization.create_with_owner_acl("run", [:team_definition, :run_tasks, :run_logs])
   end
 
   def update_run(id, user_id, attrs) do

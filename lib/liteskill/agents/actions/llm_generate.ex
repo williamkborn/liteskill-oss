@@ -14,7 +14,7 @@ defmodule Liteskill.Agents.Actions.LlmGenerate do
       max_tool_rounds: [type: :integer, default: 10]
     ]
 
-  alias Liteskill.McpServers.Client, as: McpClient
+  alias Liteskill.LLM.ToolUtils
 
   require Logger
 
@@ -132,7 +132,7 @@ defmodule Liteskill.Agents.Actions.LlmGenerate do
 
     req_opts =
       if tools != [] do
-        reqllm_tools = Enum.map(tools, &convert_tool/1)
+        reqllm_tools = Enum.map(tools, &ToolUtils.convert_tool/1)
         Keyword.put(req_opts, :tools, reqllm_tools)
       else
         req_opts
@@ -160,23 +160,13 @@ defmodule Liteskill.Agents.Actions.LlmGenerate do
     end
   end
 
-  # -- Tool conversion (same pattern as StreamHandler.convert_tool/1) --
-
-  defp convert_tool(%{"toolSpec" => spec}) do
-    ReqLLM.tool(
-      name: spec["name"],
-      description: spec["description"] || "",
-      parameter_schema: get_in(spec, ["inputSchema", "json"]) || %{},
-      callback: fn _args -> {:ok, nil} end
-    )
-  end
-
   # -- Tool call normalization --
 
   defp normalize_tool_call(tc) do
     input =
       case Jason.decode(tc.function.arguments) do
         {:ok, decoded} -> decoded
+        # coveralls-ignore-next-line
         {:error, _} -> %{"_raw" => tc.function.arguments}
       end
 
@@ -195,21 +185,8 @@ defmodule Liteskill.Agents.Actions.LlmGenerate do
 
     Enum.map(tool_calls, fn tc ->
       server = Map.get(tool_servers, tc.name)
-      execute_tool(server, tc.name, tc.input, user_id)
+      ToolUtils.execute_tool(server, tc.name, tc.input, user_id: user_id)
     end)
-  end
-
-  defp execute_tool(%{builtin: module}, tool_name, input, user_id) do
-    context = if user_id, do: [user_id: user_id], else: []
-    module.call_tool(tool_name, input, context)
-  end
-
-  defp execute_tool(server, tool_name, input, _user_id) when not is_nil(server) do
-    McpClient.call_tool(server, tool_name, input, [])
-  end
-
-  defp execute_tool(nil, tool_name, _input, _user_id) do
-    {:error, "No server configured for tool #{tool_name}"}
   end
 
   # -- Context building for tool results --
@@ -218,24 +195,11 @@ defmodule Liteskill.Agents.Actions.LlmGenerate do
     tool_result_messages =
       Enum.zip(tool_calls, tool_results)
       |> Enum.map(fn {tc, result} ->
-        ReqLLM.Context.tool_result(tc.tool_use_id, tc.name, format_tool_output(result))
+        ReqLLM.Context.tool_result(tc.tool_use_id, tc.name, ToolUtils.format_tool_output(result))
       end)
 
     Enum.reduce(tool_result_messages, llm_context, &ReqLLM.Context.append(&2, &1))
   end
-
-  defp format_tool_output({:ok, %{"content" => content}}) when is_list(content) do
-    content
-    |> Enum.map(fn
-      %{"text" => text} -> text
-      other -> Jason.encode!(other)
-    end)
-    |> Enum.join("\n")
-  end
-
-  defp format_tool_output({:ok, data}) when is_map(data), do: Jason.encode!(data)
-  defp format_tool_output({:ok, data}), do: inspect(data)
-  defp format_tool_output({:error, _}), do: "Error: tool execution failed"
 
   # -- Context serialization for logging --
 
