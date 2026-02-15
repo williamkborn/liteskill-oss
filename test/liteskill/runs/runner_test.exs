@@ -55,7 +55,7 @@ defmodule Liteskill.Runs.RunnerTest do
         user_id: owner.id
       })
 
-    {:ok, _member} = Teams.add_member(team.id, agent.id, %{role: "analyst"})
+    {:ok, _member} = Teams.add_member(team.id, agent.id, owner.id, %{role: "analyst"})
 
     # Reload team with members
     {:ok, team} = Teams.get_team(team.id, owner.id)

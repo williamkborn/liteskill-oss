@@ -1419,7 +1419,7 @@ defmodule LiteskillWeb.AgentStudioComponents do
             class="btn btn-ghost btn-sm gap-1"
           >
             <.icon name="hero-arrow-left-micro" class="size-4" />
-            {raw(@run.name)}
+            {@run.name}
           </.link>
           <span class="text-base-content/40">/</span>
           <span class="font-semibold">Log: {@log.step}</span>

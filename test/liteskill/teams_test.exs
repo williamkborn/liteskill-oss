@@ -214,11 +214,11 @@ defmodule Liteskill.TeamsTest do
     end
   end
 
-  describe "add_member/3" do
+  describe "add_member/4" do
     test "adds a member with auto-incrementing position", %{owner: owner, agent: agent} do
       {:ok, team} = Teams.create_team(team_attrs(owner))
 
-      assert {:ok, member} = Teams.add_member(team.id, agent.id)
+      assert {:ok, member} = Teams.add_member(team.id, agent.id, owner.id)
       assert member.team_definition_id == team.id
       assert member.agent_definition_id == agent.id
       assert member.position == 0
@@ -229,7 +229,10 @@ defmodule Liteskill.TeamsTest do
       {:ok, team} = Teams.create_team(team_attrs(owner))
 
       assert {:ok, member} =
-               Teams.add_member(team.id, agent.id, %{role: "lead", description: "Team lead"})
+               Teams.add_member(team.id, agent.id, owner.id, %{
+                 role: "lead",
+                 description: "Team lead"
+               })
 
       assert member.role == "lead"
       assert member.description == "Team lead"
@@ -252,8 +255,8 @@ defmodule Liteskill.TeamsTest do
           user_id: owner.id
         })
 
-      {:ok, m1} = Teams.add_member(team.id, agent2.id)
-      {:ok, m2} = Teams.add_member(team.id, agent3.id)
+      {:ok, m1} = Teams.add_member(team.id, agent2.id, owner.id)
+      {:ok, m2} = Teams.add_member(team.id, agent3.id, owner.id)
 
       assert m1.position == 0
       assert m2.position == 1
@@ -261,17 +264,26 @@ defmodule Liteskill.TeamsTest do
 
     test "enforces unique agent per team", %{owner: owner, agent: agent} do
       {:ok, team} = Teams.create_team(team_attrs(owner))
-      {:ok, _} = Teams.add_member(team.id, agent.id)
-      assert {:error, changeset} = Teams.add_member(team.id, agent.id)
+      {:ok, _} = Teams.add_member(team.id, agent.id, owner.id)
+      assert {:error, changeset} = Teams.add_member(team.id, agent.id, owner.id)
       assert "has already been taken" in errors_on(changeset).team_definition_id
+    end
+
+    test "returns forbidden for non-owner", %{owner: owner, other: other, agent: agent} do
+      {:ok, team} = Teams.create_team(team_attrs(owner))
+      assert {:error, :forbidden} = Teams.add_member(team.id, agent.id, other.id)
+    end
+
+    test "returns not_found for missing team", %{owner: owner, agent: agent} do
+      assert {:error, :not_found} = Teams.add_member(Ecto.UUID.generate(), agent.id, owner.id)
     end
   end
 
-  describe "remove_member/2" do
+  describe "remove_member/3" do
     test "removes a member", %{owner: owner, agent: agent} do
       {:ok, team} = Teams.create_team(team_attrs(owner))
-      {:ok, _} = Teams.add_member(team.id, agent.id)
-      assert {:ok, _} = Teams.remove_member(team.id, agent.id)
+      {:ok, _} = Teams.add_member(team.id, agent.id, owner.id)
+      assert {:ok, _} = Teams.remove_member(team.id, agent.id, owner.id)
 
       {:ok, team} = Teams.get_team(team.id, owner.id)
       assert team.team_members == []
@@ -279,22 +291,39 @@ defmodule Liteskill.TeamsTest do
 
     test "returns not_found for non-existent member", %{owner: owner} do
       {:ok, team} = Teams.create_team(team_attrs(owner))
-      assert {:error, :not_found} = Teams.remove_member(team.id, Ecto.UUID.generate())
+      assert {:error, :not_found} = Teams.remove_member(team.id, Ecto.UUID.generate(), owner.id)
+    end
+
+    test "returns forbidden for non-owner", %{owner: owner, other: other, agent: agent} do
+      {:ok, team} = Teams.create_team(team_attrs(owner))
+      {:ok, _} = Teams.add_member(team.id, agent.id, owner.id)
+      assert {:error, :forbidden} = Teams.remove_member(team.id, agent.id, other.id)
     end
   end
 
-  describe "update_member/2" do
+  describe "update_member/3" do
     test "updates member attributes", %{owner: owner, agent: agent} do
       {:ok, team} = Teams.create_team(team_attrs(owner))
-      {:ok, member} = Teams.add_member(team.id, agent.id)
+      {:ok, member} = Teams.add_member(team.id, agent.id, owner.id)
 
-      assert {:ok, updated} = Teams.update_member(member.id, %{role: "analyst", position: 5})
+      assert {:ok, updated} =
+               Teams.update_member(member.id, owner.id, %{role: "analyst", position: 5})
+
       assert updated.role == "analyst"
       assert updated.position == 5
     end
 
-    test "returns not_found for missing member", %{owner: _owner} do
-      assert {:error, :not_found} = Teams.update_member(Ecto.UUID.generate(), %{role: "lead"})
+    test "returns not_found for missing member", %{owner: owner} do
+      assert {:error, :not_found} =
+               Teams.update_member(Ecto.UUID.generate(), owner.id, %{role: "lead"})
+    end
+
+    test "returns forbidden for non-owner", %{owner: owner, other: other, agent: agent} do
+      {:ok, team} = Teams.create_team(team_attrs(owner))
+      {:ok, member} = Teams.add_member(team.id, agent.id, owner.id)
+
+      assert {:error, :forbidden} =
+               Teams.update_member(member.id, other.id, %{role: "analyst"})
     end
   end
 

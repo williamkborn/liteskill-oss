@@ -95,46 +95,62 @@ defmodule Liteskill.Teams do
 
   # --- Member Management ---
 
-  def add_member(team_definition_id, agent_definition_id, attrs \\ %{}) do
-    next_position =
-      from(tm in TeamMember,
-        where: tm.team_definition_id == ^team_definition_id,
-        select: coalesce(max(tm.position), -1) + 1
+  def add_member(team_definition_id, agent_definition_id, user_id, attrs \\ %{}) do
+    with {:ok, _team} <- authorize_team_owner(team_definition_id, user_id) do
+      next_position =
+        from(tm in TeamMember,
+          where: tm.team_definition_id == ^team_definition_id,
+          select: coalesce(max(tm.position), -1) + 1
+        )
+        |> Repo.one()
+
+      %TeamMember{}
+      |> TeamMember.changeset(
+        Map.merge(attrs, %{
+          team_definition_id: team_definition_id,
+          agent_definition_id: agent_definition_id,
+          position: Map.get(attrs, :position, next_position)
+        })
       )
-      |> Repo.one()
-
-    %TeamMember{}
-    |> TeamMember.changeset(
-      Map.merge(attrs, %{
-        team_definition_id: team_definition_id,
-        agent_definition_id: agent_definition_id,
-        position: Map.get(attrs, :position, next_position)
-      })
-    )
-    |> Repo.insert()
-  end
-
-  def remove_member(team_definition_id, agent_definition_id) do
-    case Repo.one(
-           from(tm in TeamMember,
-             where:
-               tm.team_definition_id == ^team_definition_id and
-                 tm.agent_definition_id == ^agent_definition_id
-           )
-         ) do
-      nil -> {:error, :not_found}
-      member -> Repo.delete(member)
+      |> Repo.insert()
     end
   end
 
-  def update_member(member_id, attrs) do
-    case Repo.get(TeamMember, member_id) do
-      nil -> {:error, :not_found}
-      member -> member |> TeamMember.changeset(attrs) |> Repo.update()
+  def remove_member(team_definition_id, agent_definition_id, user_id) do
+    with {:ok, _team} <- authorize_team_owner(team_definition_id, user_id) do
+      case Repo.one(
+             from(tm in TeamMember,
+               where:
+                 tm.team_definition_id == ^team_definition_id and
+                   tm.agent_definition_id == ^agent_definition_id
+             )
+           ) do
+        nil -> {:error, :not_found}
+        member -> Repo.delete(member)
+      end
+    end
+  end
+
+  def update_member(member_id, user_id, attrs) do
+    case Repo.get(TeamMember, member_id) |> Repo.preload(:team_definition) do
+      nil ->
+        {:error, :not_found}
+
+      member ->
+        with {:ok, _team} <- authorize_owner(member.team_definition, user_id) do
+          member |> TeamMember.changeset(attrs) |> Repo.update()
+        end
     end
   end
 
   # --- Private ---
 
   defp authorize_owner(entity, user_id), do: Authorization.authorize_owner(entity, user_id)
+
+  defp authorize_team_owner(team_definition_id, user_id) do
+    case Repo.get(TeamDefinition, team_definition_id) do
+      nil -> {:error, :not_found}
+      team -> authorize_owner(team, user_id)
+    end
+  end
 end

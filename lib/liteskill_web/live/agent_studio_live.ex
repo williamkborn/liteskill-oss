@@ -587,8 +587,9 @@ defmodule LiteskillWeb.AgentStudioLive do
 
   def handle_studio_event("add_team_member", %{"agent_id" => agent_id}, socket) do
     team = socket.assigns.editing_team
+    user_id = socket.assigns.current_user.id
 
-    case Teams.add_member(team.id, agent_id) do
+    case Teams.add_member(team.id, agent_id, user_id) do
       {:ok, _member} ->
         {:ok, team} = Teams.get_team(team.id, socket.assigns.current_user.id)
         member_agent_ids = MapSet.new(team.team_members, & &1.agent_definition_id)
@@ -609,8 +610,9 @@ defmodule LiteskillWeb.AgentStudioLive do
 
   def handle_studio_event("remove_team_member", %{"agent_id" => agent_id}, socket) do
     team = socket.assigns.editing_team
+    user_id = socket.assigns.current_user.id
 
-    case Teams.remove_member(team.id, agent_id) do
+    case Teams.remove_member(team.id, agent_id, user_id) do
       {:ok, _} ->
         {:ok, team} = Teams.get_team(team.id, socket.assigns.current_user.id)
         all_agents = Agents.list_agents(socket.assigns.current_user.id)
@@ -650,7 +652,7 @@ defmodule LiteskillWeb.AgentStudioLive do
     end
   end
 
-  def handle_studio_event("start_run", %{"id" => id}, socket) do
+  def handle_studio_event("start_run", _params, socket) do
     user_id = socket.assigns.current_user.id
     run = socket.assigns.studio_run
 
@@ -659,7 +661,7 @@ defmodule LiteskillWeb.AgentStudioLive do
        Phoenix.LiveView.put_flash(socket, :error, "Run can only be started when pending")}
     else
       Task.Supervisor.start_child(Liteskill.TaskSupervisor, fn ->
-        Runner.run(id, user_id)
+        Runner.run(run.id, user_id)
       end)
 
       {:noreply,
