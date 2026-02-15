@@ -305,6 +305,65 @@ defmodule Liteskill.UsageTest do
     end
   end
 
+  describe "usage_by_groups/2" do
+    test "returns batch usage for multiple groups", %{user: user, conversation: conv} do
+      {:ok, user2} =
+        Liteskill.Accounts.find_or_create_from_oidc(%{
+          email: "batch-member-#{System.unique_integer([:positive])}@example.com",
+          name: "Batch Member",
+          oidc_sub: "batch-member-#{System.unique_integer([:positive])}",
+          oidc_issuer: "https://test.example.com"
+        })
+
+      {:ok, group1} = Liteskill.Groups.create_group("batch-group-1", user.id)
+      {:ok, group2} = Liteskill.Groups.create_group("batch-group-2", user.id)
+      {:ok, _} = Liteskill.Groups.admin_add_member(group2.id, user2.id, "member")
+
+      Usage.record_usage(valid_attrs(user, conv, %{total_tokens: 100}))
+
+      {:ok, conv2} =
+        Liteskill.Chat.create_conversation(%{user_id: user2.id, title: "Batch Conv"})
+
+      Usage.record_usage(valid_attrs(user2, conv2, %{total_tokens: 200}))
+
+      result = Usage.usage_by_groups([group1.id, group2.id])
+
+      assert is_map(result)
+      assert map_size(result) == 2
+
+      # group1 has user (owner/creator) with 100 tokens
+      assert result[group1.id].total_tokens == 100
+
+      # group2 has user (creator, 100 tokens) + user2 (member, 200 tokens) = 300
+      assert result[group2.id].total_tokens == 300
+    end
+
+    test "returns zeroed values for groups with no usage", %{user: user} do
+      {:ok, group} = Liteskill.Groups.create_group("empty-batch-group", user.id)
+
+      result = Usage.usage_by_groups([group.id])
+
+      assert result[group.id].total_tokens == 0
+      assert result[group.id].call_count == 0
+    end
+
+    test "returns empty map for empty group_ids list" do
+      assert Usage.usage_by_groups([]) == %{}
+    end
+
+    test "respects time filters", %{user: user, conversation: conv} do
+      {:ok, group} = Liteskill.Groups.create_group("time-batch-group", user.id)
+
+      Usage.record_usage(valid_attrs(user, conv, %{total_tokens: 100}))
+
+      future = DateTime.add(DateTime.utc_now(), 3600, :second)
+      result = Usage.usage_by_groups([group.id], from: future)
+
+      assert result[group.id].total_tokens == 0
+      assert result[group.id].call_count == 0
+    end
+  end
+
   describe "usage_by_run/1" do
     setup %{user: user} do
       {:ok, run} =

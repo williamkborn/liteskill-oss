@@ -186,15 +186,14 @@ defmodule Liteskill.Usage do
     * `:to` - End datetime (exclusive)
   """
   def usage_by_group(group_id, opts \\ []) do
-    member_ids =
+    member_subquery =
       from(gm in Liteskill.Groups.GroupMembership,
         where: gm.group_id == ^group_id,
         select: gm.user_id
       )
-      |> Repo.all()
 
     UsageRecord
-    |> where([r], r.user_id in ^member_ids)
+    |> where([r], r.user_id in subquery(member_subquery))
     |> apply_time_filters(opts)
     |> select([r], %{
       input_tokens: coalesce(sum(r.input_tokens), 0),
@@ -208,6 +207,60 @@ defmodule Liteskill.Usage do
       call_count: count(r.id)
     })
     |> Repo.one()
+  end
+
+  @doc """
+  Returns aggregated usage for multiple groups in a single query.
+
+  Returns a map of `group_id => usage_map`. Groups with no usage
+  are included with zeroed values.
+
+  ## Options
+
+    * `:from` - Start datetime (inclusive)
+    * `:to` - End datetime (exclusive)
+  """
+  def usage_by_groups(group_ids, opts \\ []) when is_list(group_ids) do
+    if group_ids == [] do
+      %{}
+    else
+      results =
+        UsageRecord
+        |> join(:inner, [r], gm in Liteskill.Groups.GroupMembership,
+          on: r.user_id == gm.user_id and gm.group_id in ^group_ids
+        )
+        |> apply_time_filters(opts)
+        |> group_by([r, gm], gm.group_id)
+        |> select([r, gm], %{
+          group_id: gm.group_id,
+          input_tokens: coalesce(sum(r.input_tokens), 0),
+          output_tokens: coalesce(sum(r.output_tokens), 0),
+          total_tokens: coalesce(sum(r.total_tokens), 0),
+          reasoning_tokens: coalesce(sum(r.reasoning_tokens), 0),
+          cached_tokens: coalesce(sum(r.cached_tokens), 0),
+          input_cost: sum(r.input_cost),
+          output_cost: sum(r.output_cost),
+          total_cost: sum(r.total_cost),
+          call_count: count(r.id)
+        })
+        |> Repo.all()
+
+      result_map = Map.new(results, fn row -> {row.group_id, Map.delete(row, :group_id)} end)
+
+      empty = %{
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        reasoning_tokens: 0,
+        cached_tokens: 0,
+        input_cost: nil,
+        output_cost: nil,
+        total_cost: nil,
+        call_count: 0
+      }
+
+      Map.new(group_ids, fn id -> {id, Map.get(result_map, id, empty)} end)
+    end
   end
 
   @doc """

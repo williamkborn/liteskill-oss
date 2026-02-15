@@ -12,6 +12,9 @@ defmodule Liteskill.LLM do
 
   alias Liteskill.LLM.StreamHandler
   alias Liteskill.Usage
+  alias Liteskill.Usage.CostCalculator
+
+  require Logger
 
   @doc """
   Sends a non-streaming completion request.
@@ -104,7 +107,7 @@ defmodule Liteskill.LLM do
       output_tokens = usage[:output_tokens] || 0
 
       {input_cost, output_cost, total_cost} =
-        resolve_costs(usage, llm_model, input_tokens, output_tokens)
+        CostCalculator.resolve_costs(usage, llm_model, input_tokens, output_tokens)
 
       attrs = %{
         user_id: user_id,
@@ -119,50 +122,21 @@ defmodule Liteskill.LLM do
         cache_creation_tokens: usage[:cache_creation_tokens] || 0,
         input_cost: input_cost,
         output_cost: output_cost,
-        reasoning_cost: to_decimal(usage[:reasoning_cost]),
+        reasoning_cost: CostCalculator.to_decimal(usage[:reasoning_cost]),
         total_cost: total_cost,
         call_type: "complete"
       }
 
-      Usage.record_usage(attrs)
+      case Usage.record_usage(attrs) do
+        {:ok, _} ->
+          :ok
+
+        # coveralls-ignore-start
+        {:error, changeset} ->
+          Logger.warning("Failed to record usage: #{inspect(changeset.errors)}")
+          # coveralls-ignore-stop
+      end
     end
-  end
-
-  defp to_decimal(nil), do: nil
-  # coveralls-ignore-next-line
-  defp to_decimal(%Decimal{} = d), do: d
-  # coveralls-ignore-next-line
-  defp to_decimal(val) when is_float(val), do: Decimal.from_float(val)
-  # coveralls-ignore-next-line
-  defp to_decimal(val) when is_integer(val), do: Decimal.new(val)
-
-  defp resolve_costs(usage, llm_model, input_tokens, output_tokens) do
-    api_input = to_decimal(usage[:input_cost])
-    api_output = to_decimal(usage[:output_cost])
-    api_total = to_decimal(usage[:total_cost])
-
-    if api_total do
-      # coveralls-ignore-next-line
-      {api_input, api_output, api_total}
-    else
-      input_cost = cost_from_rate(input_tokens, llm_model && llm_model.input_cost_per_million)
-      output_cost = cost_from_rate(output_tokens, llm_model && llm_model.output_cost_per_million)
-
-      total_cost =
-        if input_cost || output_cost do
-          Decimal.add(input_cost || Decimal.new(0), output_cost || Decimal.new(0))
-        end
-
-      {input_cost, output_cost, total_cost}
-    end
-  end
-
-  defp cost_from_rate(_tokens, nil), do: nil
-  # coveralls-ignore-next-line
-  defp cost_from_rate(0, _rate), do: Decimal.new(0)
-
-  defp cost_from_rate(tokens, rate) do
-    tokens |> Decimal.new() |> Decimal.mult(rate) |> Decimal.div(1_000_000)
   end
 
   @doc """

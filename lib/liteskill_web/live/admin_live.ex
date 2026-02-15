@@ -124,11 +124,16 @@ defmodule LiteskillWeb.AdminLive do
     user_map = Map.new(users, fn u -> {u.id, u} end)
 
     groups = Groups.list_all_groups()
+    group_ids = Enum.map(groups, & &1.id)
+    group_usage_map = Usage.usage_by_groups(group_ids, time_opts)
 
     group_usage =
-      Enum.map(groups, fn group ->
-        usage = Usage.usage_by_group(group.id, time_opts)
-        %{group: group, usage: usage}
+      groups
+      |> Enum.map(fn group ->
+        %{
+          group: group,
+          usage: Map.get(group_usage_map, group.id, %{total_tokens: 0, call_count: 0})
+        }
       end)
       |> Enum.sort_by(fn %{usage: u} -> u.total_tokens end, :desc)
 
