@@ -1,6 +1,7 @@
 defmodule Liteskill.Rag.CohereClientTest do
-  use ExUnit.Case, async: true
+  use Liteskill.DataCase, async: false
 
+  alias Liteskill.LlmProviders
   alias Liteskill.Rag.CohereClient
 
   setup do
@@ -14,11 +15,19 @@ defmodule Liteskill.Rag.CohereClientTest do
 
     Application.put_env(:liteskill, Liteskill.LLM, merged)
 
+    {:ok, user} =
+      Liteskill.Accounts.find_or_create_from_oidc(%{
+        email: "cohere-test-#{System.unique_integer([:positive])}@example.com",
+        name: "Cohere Test User",
+        oidc_sub: "cohere-test-#{System.unique_integer([:positive])}",
+        oidc_issuer: "https://test.example.com"
+      })
+
     on_exit(fn ->
       Application.put_env(:liteskill, Liteskill.LLM, original)
     end)
 
-    :ok
+    %{user: user}
   end
 
   describe "embed/2" do
@@ -314,6 +323,40 @@ defmodule Liteskill.Rag.CohereClientTest do
 
       assert {:ok, [%{"index" => 0, "relevance_score" => 0.9}]} =
                CohereClient.rerank("query", ["doc"], plug: {Req.Test, CohereClient})
+    end
+  end
+
+  describe "DB credential preference" do
+    test "uses DB provider credentials over env vars", %{user: user} do
+      {:ok, _} =
+        LlmProviders.create_provider(%{
+          name: "DB Bedrock #{System.unique_integer([:positive])}",
+          provider_type: "amazon_bedrock",
+          api_key: "db-token-xyz",
+          provider_config: %{"region" => "eu-west-1"},
+          instance_wide: true,
+          user_id: user.id
+        })
+
+      Req.Test.stub(CohereClient, fn conn ->
+        auth = Plug.Conn.get_req_header(conn, "authorization")
+        assert auth == ["Bearer db-token-xyz"]
+
+        assert conn.host == "bedrock-runtime.eu-west-1.amazonaws.com"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(
+          200,
+          Jason.encode!(%{"embeddings" => %{"float" => [[0.1]]}})
+        )
+      end)
+
+      assert {:ok, [[0.1]]} =
+               CohereClient.embed(["test"],
+                 input_type: "search_document",
+                 plug: {Req.Test, CohereClient}
+               )
     end
   end
 end

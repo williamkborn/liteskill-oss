@@ -73,7 +73,7 @@ defmodule Liteskill.MixProject do
       {:oban, "~> 2.19"},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
-      {:gettext, "~> 1.0"},
+      {:gettext, "~> 1.0", override: true},
       {:jason, "~> 1.2"},
       {:mdex, "~> 0.11"},
       {:dns_cluster, "~> 0.2.0"},
@@ -83,6 +83,7 @@ defmodule Liteskill.MixProject do
       {:oidcc, "~> 3.0"},
       {:argon2_elixir, "~> 4.1"},
       {:jose, "~> 1.11"},
+      {:jido, path: "../jido"},
       {:excoveralls, "~> 0.18", only: :test},
       {:tidewave, "~> 0.5", only: :dev}
     ]

@@ -1,14 +1,15 @@
 defmodule LiteskillWeb.AgentStudioLive do
   @moduledoc """
   Agent Studio event handlers and helpers, rendered within ChatLive's main area.
-  Handles Agents, Teams, Instances, and Schedules pages.
+  Handles Agents, Teams, Runs, and Schedules pages.
   """
 
   use LiteskillWeb, :html
 
   alias Liteskill.Agents
-  alias Liteskill.Instances
-  alias Liteskill.Instances.Runner
+  alias Liteskill.Runs
+  alias Liteskill.Runs.Runner
+  alias Liteskill.McpServers
   alias Liteskill.Schedules
   alias Liteskill.Teams
 
@@ -21,9 +22,9 @@ defmodule LiteskillWeb.AgentStudioLive do
     :team_new,
     :team_show,
     :team_edit,
-    :instances,
-    :instance_new,
-    :instance_show,
+    :runs,
+    :run_new,
+    :run_show,
     :schedules,
     :schedule_new,
     :schedule_show
@@ -37,19 +38,19 @@ defmodule LiteskillWeb.AgentStudioLive do
       studio_agent: nil,
       studio_teams: [],
       studio_team: nil,
-      studio_instances: [],
-      studio_instance: nil,
+      studio_runs: [],
+      studio_run: nil,
       studio_schedules: [],
       studio_schedule: nil,
       agent_form: agent_form(),
       team_form: team_form(),
-      instance_form: instance_form(),
+      run_form: run_form(),
       schedule_form: schedule_form(),
       editing_agent: nil,
       editing_team: nil,
       confirm_delete_agent_id: nil,
       confirm_delete_team_id: nil,
-      confirm_delete_instance_id: nil,
+      confirm_delete_run_id: nil,
       confirm_delete_schedule_id: nil
     ]
   end
@@ -88,7 +89,7 @@ defmodule LiteskillWeb.AgentStudioLive do
     )
   end
 
-  def instance_form(data \\ %{}) do
+  def run_form(data \\ %{}) do
     Phoenix.Component.to_form(
       Map.merge(
         %{
@@ -102,7 +103,7 @@ defmodule LiteskillWeb.AgentStudioLive do
         },
         data
       ),
-      as: :instance
+      as: :run
     )
   end
 
@@ -183,10 +184,13 @@ defmodule LiteskillWeb.AgentStudioLive do
 
     case Agents.get_agent(agent_id, user_id) do
       {:ok, agent} ->
+        available_mcp_servers = compute_available_servers(user_id, agent)
+
         socket
         |> reset_common()
         |> Phoenix.Component.assign(
           editing_agent: agent,
+          available_mcp_servers: available_mcp_servers,
           agent_form:
             agent_form(%{
               "name" => agent.name || "",
@@ -253,10 +257,15 @@ defmodule LiteskillWeb.AgentStudioLive do
 
     case Teams.get_team(team_id, user_id) do
       {:ok, team} ->
+        all_agents = Agents.list_agents(user_id)
+        member_agent_ids = MapSet.new(team.team_members, & &1.agent_definition_id)
+        available_agents = Enum.reject(all_agents, &MapSet.member?(member_agent_ids, &1.id))
+
         socket
         |> reset_common()
         |> Phoenix.Component.assign(
           editing_team: team,
+          available_agents: available_agents,
           team_form:
             team_form(%{
               "name" => team.name || "",
@@ -275,47 +284,70 @@ defmodule LiteskillWeb.AgentStudioLive do
     end
   end
 
-  # Instances
+  # Runs
 
-  def apply_studio_action(socket, :instances, _params) do
+  def apply_studio_action(socket, :runs, _params) do
     user_id = socket.assigns.current_user.id
-    instances = Instances.list_instances(user_id)
+    runs = Runs.list_runs(user_id)
 
     socket
     |> reset_common()
     |> Phoenix.Component.assign(
-      studio_instances: instances,
-      confirm_delete_instance_id: nil,
-      page_title: "Instances"
+      studio_runs: runs,
+      confirm_delete_run_id: nil,
+      page_title: "Runs"
     )
   end
 
-  def apply_studio_action(socket, :instance_new, _params) do
+  def apply_studio_action(socket, :run_new, _params) do
     user_id = socket.assigns.current_user.id
     teams = Teams.list_teams(user_id)
 
     socket
     |> reset_common()
     |> Phoenix.Component.assign(
-      instance_form: instance_form(),
+      run_form: run_form(),
       studio_teams: teams,
-      page_title: "New Instance"
+      page_title: "New Run"
     )
   end
 
-  def apply_studio_action(socket, :instance_show, %{"instance_id" => instance_id}) do
+  def apply_studio_action(socket, :run_show, %{"run_id" => run_id}) do
     user_id = socket.assigns.current_user.id
 
-    case Instances.get_instance(instance_id, user_id) do
-      {:ok, instance} ->
+    case Runs.get_run(run_id, user_id) do
+      {:ok, run} ->
         socket
         |> reset_common()
-        |> Phoenix.Component.assign(studio_instance: instance, page_title: instance.name)
+        |> Phoenix.Component.assign(studio_run: run, page_title: run.name)
 
       {:error, _} ->
         socket
-        |> Phoenix.LiveView.put_flash(:error, "Instance not found")
-        |> Phoenix.LiveView.push_navigate(to: "/instances")
+        |> Phoenix.LiveView.put_flash(:error, "Run not found")
+        |> Phoenix.LiveView.push_navigate(to: "/runs")
+    end
+  end
+
+  def apply_studio_action(socket, :run_log_show, %{
+        "run_id" => run_id,
+        "log_id" => log_id
+      }) do
+    user_id = socket.assigns.current_user.id
+
+    with {:ok, run} <- Runs.get_run(run_id, user_id),
+         {:ok, log} <- Runs.get_log(log_id, user_id) do
+      socket
+      |> reset_common()
+      |> Phoenix.Component.assign(
+        studio_run: run,
+        studio_log: log,
+        page_title: "Log: #{log.step}"
+      )
+    else
+      {:error, _} ->
+        socket
+        |> Phoenix.LiveView.put_flash(:error, "Log entry not found")
+        |> Phoenix.LiveView.push_navigate(to: "/runs")
     end
   end
 
@@ -418,6 +450,89 @@ defmodule LiteskillWeb.AgentStudioLive do
     end
   end
 
+  def handle_studio_event("add_agent_tool", %{"server_id" => "builtin:" <> _ = id}, socket) do
+    agent = socket.assigns.editing_agent
+    existing = get_in(agent.config, ["builtin_server_ids"]) || []
+
+    if id in existing do
+      {:noreply, socket}
+    else
+      config = Map.put(agent.config || %{}, "builtin_server_ids", existing ++ [id])
+
+      case Agents.update_agent(agent.id, socket.assigns.current_user.id, %{config: config}) do
+        {:ok, agent} ->
+          available = compute_available_servers(socket.assigns.current_user.id, agent)
+
+          {:noreply,
+           Phoenix.Component.assign(socket,
+             editing_agent: agent,
+             available_mcp_servers: available
+           )}
+
+        {:error, _} ->
+          {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Could not add server")}
+      end
+    end
+  end
+
+  def handle_studio_event("add_agent_tool", %{"server_id" => server_id}, socket) do
+    agent = socket.assigns.editing_agent
+
+    case Agents.add_tool(agent.id, server_id) do
+      {:ok, _tool} ->
+        {:ok, agent} = Agents.get_agent(agent.id, socket.assigns.current_user.id)
+        available = compute_available_servers(socket.assigns.current_user.id, agent)
+
+        {:noreply,
+         Phoenix.Component.assign(socket,
+           editing_agent: agent,
+           available_mcp_servers: available
+         )}
+
+      {:error, _} ->
+        {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Could not add server")}
+    end
+  end
+
+  def handle_studio_event("remove_agent_tool", %{"server_id" => "builtin:" <> _ = id}, socket) do
+    agent = socket.assigns.editing_agent
+    existing = get_in(agent.config, ["builtin_server_ids"]) || []
+    config = Map.put(agent.config || %{}, "builtin_server_ids", List.delete(existing, id))
+
+    case Agents.update_agent(agent.id, socket.assigns.current_user.id, %{config: config}) do
+      {:ok, agent} ->
+        available = compute_available_servers(socket.assigns.current_user.id, agent)
+
+        {:noreply,
+         Phoenix.Component.assign(socket,
+           editing_agent: agent,
+           available_mcp_servers: available
+         )}
+
+      {:error, _} ->
+        {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Could not remove server")}
+    end
+  end
+
+  def handle_studio_event("remove_agent_tool", %{"server_id" => server_id}, socket) do
+    agent = socket.assigns.editing_agent
+
+    case Agents.remove_tool(agent.id, server_id) do
+      {:ok, _} ->
+        {:ok, agent} = Agents.get_agent(agent.id, socket.assigns.current_user.id)
+        available = compute_available_servers(socket.assigns.current_user.id, agent)
+
+        {:noreply,
+         Phoenix.Component.assign(socket,
+           editing_agent: agent,
+           available_mcp_servers: available
+         )}
+
+      {:error, _} ->
+        {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Could not remove server")}
+    end
+  end
+
   # Team events
 
   def handle_studio_event("save_team", %{"team" => params}, socket) do
@@ -470,27 +585,72 @@ defmodule LiteskillWeb.AgentStudioLive do
     end
   end
 
-  # Instance events
+  def handle_studio_event("add_team_member", %{"agent_id" => agent_id}, socket) do
+    team = socket.assigns.editing_team
 
-  def handle_studio_event("save_instance", %{"instance" => params}, socket) do
+    case Teams.add_member(team.id, agent_id) do
+      {:ok, _member} ->
+        {:ok, team} = Teams.get_team(team.id, socket.assigns.current_user.id)
+        member_agent_ids = MapSet.new(team.team_members, & &1.agent_definition_id)
+
+        available_agents =
+          Enum.reject(socket.assigns.available_agents, &MapSet.member?(member_agent_ids, &1.id))
+
+        {:noreply,
+         Phoenix.Component.assign(socket,
+           editing_team: team,
+           available_agents: available_agents
+         )}
+
+      {:error, _} ->
+        {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Could not add agent")}
+    end
+  end
+
+  def handle_studio_event("remove_team_member", %{"agent_id" => agent_id}, socket) do
+    team = socket.assigns.editing_team
+
+    case Teams.remove_member(team.id, agent_id) do
+      {:ok, _} ->
+        {:ok, team} = Teams.get_team(team.id, socket.assigns.current_user.id)
+        all_agents = Agents.list_agents(socket.assigns.current_user.id)
+        member_agent_ids = MapSet.new(team.team_members, & &1.agent_definition_id)
+
+        available_agents =
+          Enum.reject(all_agents, &MapSet.member?(member_agent_ids, &1.id))
+
+        {:noreply,
+         Phoenix.Component.assign(socket,
+           editing_team: team,
+           available_agents: available_agents
+         )}
+
+      {:error, _} ->
+        {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Could not remove agent")}
+    end
+  end
+
+  # Run events
+
+  def handle_studio_event("save_run", %{"run" => params}, socket) do
     user_id = socket.assigns.current_user.id
 
-    case Instances.create_instance(Map.put(params, "user_id", user_id)) do
-      {:ok, instance} ->
+    case Runs.create_run(Map.put(params, "user_id", user_id)) do
+      {:ok, run} ->
         {:noreply,
          socket
-         |> Phoenix.LiveView.put_flash(:info, "Instance created")
-         |> Phoenix.LiveView.push_navigate(to: "/instances/#{instance.id}")}
+         |> Phoenix.LiveView.put_flash(:info, "Run created")
+         |> Phoenix.LiveView.push_navigate(to: "/runs/#{run.id}")}
 
       {:error, changeset} ->
         {:noreply,
          socket
          |> Phoenix.LiveView.put_flash(:error, format_errors(changeset))
-         |> Phoenix.Component.assign(instance_form: instance_form(params))}
+         |> Phoenix.Component.assign(run_form: run_form(params))}
     end
   end
 
-  def handle_studio_event("run_instance", %{"id" => id}, socket) do
+  def handle_studio_event("start_run", %{"id" => id}, socket) do
     user_id = socket.assigns.current_user.id
 
     Task.Supervisor.start_child(Liteskill.TaskSupervisor, fn ->
@@ -499,32 +659,59 @@ defmodule LiteskillWeb.AgentStudioLive do
 
     {:noreply,
      socket
-     |> Phoenix.LiveView.put_flash(:info, "Instance started. Refresh to see results.")
-     |> Phoenix.Component.assign(
-       studio_instance: %{socket.assigns.studio_instance | status: "running"}
-     )}
+     |> Phoenix.LiveView.put_flash(:info, "Run started. Refresh to see results.")
+     |> Phoenix.Component.assign(studio_run: %{socket.assigns.studio_run | status: "running"})}
   end
 
-  def handle_studio_event("confirm_delete_instance", %{"id" => id}, socket) do
-    {:noreply, Phoenix.Component.assign(socket, confirm_delete_instance_id: id)}
-  end
-
-  def handle_studio_event("cancel_delete_instance", _params, socket) do
-    {:noreply, Phoenix.Component.assign(socket, confirm_delete_instance_id: nil)}
-  end
-
-  def handle_studio_event("delete_instance", %{"id" => id}, socket) do
+  def handle_studio_event("rerun", %{"id" => id}, socket) do
     user_id = socket.assigns.current_user.id
 
-    case Instances.delete_instance(id, user_id) do
+    with {:ok, original} <- Runs.get_run(id, user_id),
+         {:ok, new_run} <-
+           Runs.create_run(%{
+             name: original.name,
+             description: original.description,
+             prompt: original.prompt,
+             topology: original.topology,
+             team_definition_id: original.team_definition_id,
+             timeout_ms: original.timeout_ms,
+             max_iterations: original.max_iterations,
+             user_id: user_id
+           }) do
+      Task.Supervisor.start_child(Liteskill.TaskSupervisor, fn ->
+        Runner.run(new_run.id, user_id)
+      end)
+
+      {:noreply,
+       socket
+       |> Phoenix.LiveView.put_flash(:info, "Rerun started.")
+       |> Phoenix.LiveView.push_navigate(to: "/runs/#{new_run.id}")}
+    else
+      {:error, _} ->
+        {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Could not rerun")}
+    end
+  end
+
+  def handle_studio_event("confirm_delete_run", %{"id" => id}, socket) do
+    {:noreply, Phoenix.Component.assign(socket, confirm_delete_run_id: id)}
+  end
+
+  def handle_studio_event("cancel_delete_run", _params, socket) do
+    {:noreply, Phoenix.Component.assign(socket, confirm_delete_run_id: nil)}
+  end
+
+  def handle_studio_event("delete_run", %{"id" => id}, socket) do
+    user_id = socket.assigns.current_user.id
+
+    case Runs.delete_run(id, user_id) do
       {:ok, _} ->
         {:noreply,
          socket
-         |> Phoenix.LiveView.put_flash(:info, "Instance deleted")
-         |> Phoenix.LiveView.push_navigate(to: "/instances")}
+         |> Phoenix.LiveView.put_flash(:info, "Run deleted")
+         |> Phoenix.LiveView.push_navigate(to: "/runs")}
 
       {:error, _} ->
-        {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Could not delete instance")}
+        {:noreply, Phoenix.LiveView.put_flash(socket, :error, "Could not delete run")}
     end
   end
 
@@ -621,4 +808,18 @@ defmodule LiteskillWeb.AgentStudioLive do
   end
 
   defp format_errors(_), do: "An error occurred"
+
+  defp compute_available_servers(user_id, agent) do
+    all_servers = McpServers.list_servers(user_id)
+    assigned_db_ids = MapSet.new(agent.agent_tools, & &1.mcp_server_id)
+    assigned_builtin_ids = MapSet.new(get_in(agent.config, ["builtin_server_ids"]) || [])
+
+    Enum.reject(all_servers, fn server ->
+      if Map.has_key?(server, :builtin) do
+        MapSet.member?(assigned_builtin_ids, server.id)
+      else
+        MapSet.member?(assigned_db_ids, server.id)
+      end
+    end)
+  end
 end

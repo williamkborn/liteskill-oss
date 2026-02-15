@@ -23,7 +23,7 @@ defmodule Liteskill.Agents do
           {:ok, _} =
             Authorization.create_owner_acl("agent_definition", agent.id, agent.user_id)
 
-          Repo.preload(agent, [:llm_model, :agent_tools])
+          Repo.preload(agent, [:llm_model, agent_tools: :mcp_server])
 
         {:error, changeset} ->
           Repo.rollback(changeset)
@@ -42,7 +42,7 @@ defmodule Liteskill.Agents do
           |> AgentDefinition.changeset(attrs)
           |> Repo.update()
           |> case do
-            {:ok, updated} -> {:ok, Repo.preload(updated, [:llm_model, :agent_tools])}
+            {:ok, updated} -> {:ok, Repo.preload(updated, [:llm_model, agent_tools: :mcp_server])}
             error -> error
           end
         end
@@ -69,12 +69,13 @@ defmodule Liteskill.Agents do
     AgentDefinition
     |> where([a], a.user_id == ^user_id or a.id in subquery(accessible_ids))
     |> order_by([a], asc: a.name)
-    |> preload([:llm_model, :agent_tools])
+    |> preload([:llm_model, agent_tools: :mcp_server])
     |> Repo.all()
   end
 
   def get_agent(id, user_id) do
-    case Repo.get(AgentDefinition, id) |> Repo.preload([:llm_model, :agent_tools]) do
+    case Repo.get(AgentDefinition, id)
+         |> Repo.preload(llm_model: :provider, agent_tools: :mcp_server) do
       nil ->
         {:error, :not_found}
 
@@ -91,7 +92,7 @@ defmodule Liteskill.Agents do
   end
 
   def get_agent!(id) do
-    Repo.get!(AgentDefinition, id) |> Repo.preload([:llm_model, :agent_tools])
+    Repo.get!(AgentDefinition, id) |> Repo.preload(llm_model: :provider, agent_tools: :mcp_server)
   end
 
   # --- Tool Management ---

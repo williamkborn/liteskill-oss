@@ -84,9 +84,10 @@ defmodule LiteskillWeb.Router do
       live "/teams/new", ChatLive, :team_new
       live "/teams/:team_id", ChatLive, :team_show
       live "/teams/:team_id/edit", ChatLive, :team_edit
-      live "/instances", ChatLive, :instances
-      live "/instances/new", ChatLive, :instance_new
-      live "/instances/:instance_id", ChatLive, :instance_show
+      live "/runs", ChatLive, :runs
+      live "/runs/new", ChatLive, :run_new
+      live "/runs/:run_id", ChatLive, :run_show
+      live "/runs/:run_id/logs/:log_id", ChatLive, :run_log_show
       live "/schedules", ChatLive, :schedules
       live "/schedules/new", ChatLive, :schedule_new
       live "/schedules/:schedule_id", ChatLive, :schedule_show

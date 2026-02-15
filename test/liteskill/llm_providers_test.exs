@@ -268,6 +268,151 @@ defmodule Liteskill.LlmProvidersTest do
     end
   end
 
+  # --- Environment bootstrap ---
+
+  describe "ensure_env_providers/0" do
+    setup do
+      original = Application.get_env(:liteskill, Liteskill.LLM, [])
+
+      on_exit(fn ->
+        Application.put_env(:liteskill, Liteskill.LLM, original)
+      end)
+
+      # Ensure admin user exists
+      Liteskill.Accounts.ensure_admin_user()
+      admin_email = Liteskill.Accounts.User.admin_email()
+      admin = Liteskill.Accounts.get_user_by_email(admin_email)
+
+      %{real_admin: admin}
+    end
+
+    test "creates provider when env var config is present", %{real_admin: admin} do
+      Application.put_env(:liteskill, Liteskill.LLM,
+        bedrock_bearer_token: "test-env-token",
+        bedrock_region: "us-west-2"
+      )
+
+      assert :ok = LlmProviders.ensure_env_providers()
+
+      providers = LlmProviders.list_providers(admin.id)
+      env_provider = Enum.find(providers, &(&1.name == "Bedrock (environment)"))
+      assert env_provider != nil
+      assert env_provider.provider_type == "amazon_bedrock"
+      assert env_provider.api_key == "test-env-token"
+      assert env_provider.provider_config == %{"region" => "us-west-2"}
+      assert env_provider.instance_wide == true
+      assert env_provider.status == "active"
+    end
+
+    test "is idempotent — calling twice does not duplicate", %{real_admin: admin} do
+      Application.put_env(:liteskill, Liteskill.LLM,
+        bedrock_bearer_token: "test-env-token",
+        bedrock_region: "us-east-1"
+      )
+
+      assert :ok = LlmProviders.ensure_env_providers()
+      assert :ok = LlmProviders.ensure_env_providers()
+
+      providers = LlmProviders.list_providers(admin.id)
+      env_providers = Enum.filter(providers, &(&1.name == "Bedrock (environment)"))
+      assert length(env_providers) == 1
+    end
+
+    test "updates credentials on re-boot", %{real_admin: admin} do
+      Application.put_env(:liteskill, Liteskill.LLM,
+        bedrock_bearer_token: "old-token",
+        bedrock_region: "us-east-1"
+      )
+
+      assert :ok = LlmProviders.ensure_env_providers()
+
+      Application.put_env(:liteskill, Liteskill.LLM,
+        bedrock_bearer_token: "new-token",
+        bedrock_region: "eu-west-1"
+      )
+
+      assert :ok = LlmProviders.ensure_env_providers()
+
+      providers = LlmProviders.list_providers(admin.id)
+      env_provider = Enum.find(providers, &(&1.name == "Bedrock (environment)"))
+      assert env_provider.api_key == "new-token"
+      assert env_provider.provider_config == %{"region" => "eu-west-1"}
+    end
+
+    test "no-op when no env var is set" do
+      Application.put_env(:liteskill, Liteskill.LLM, [])
+
+      assert :ok = LlmProviders.ensure_env_providers()
+    end
+  end
+
+  describe "get_bedrock_credentials/0" do
+    test "returns credentials from active instance-wide provider", %{admin: admin} do
+      {:ok, _} =
+        LlmProviders.create_provider(%{
+          name: "Test Bedrock #{System.unique_integer([:positive])}",
+          provider_type: "amazon_bedrock",
+          api_key: "db-api-key",
+          provider_config: %{"region" => "us-west-2"},
+          instance_wide: true,
+          user_id: admin.id
+        })
+
+      creds = LlmProviders.get_bedrock_credentials()
+      assert creds.api_key == "db-api-key"
+      assert creds.region == "us-west-2"
+    end
+
+    test "returns nil when no bedrock provider exists" do
+      assert LlmProviders.get_bedrock_credentials() == nil
+    end
+
+    test "ignores inactive providers", %{admin: admin} do
+      {:ok, _} =
+        LlmProviders.create_provider(%{
+          name: "Inactive Bedrock #{System.unique_integer([:positive])}",
+          provider_type: "amazon_bedrock",
+          api_key: "inactive-key",
+          provider_config: %{"region" => "us-east-1"},
+          instance_wide: true,
+          status: "inactive",
+          user_id: admin.id
+        })
+
+      assert LlmProviders.get_bedrock_credentials() == nil
+    end
+
+    test "ignores non-instance-wide providers", %{admin: admin} do
+      {:ok, _} =
+        LlmProviders.create_provider(%{
+          name: "Private Bedrock #{System.unique_integer([:positive])}",
+          provider_type: "amazon_bedrock",
+          api_key: "private-key",
+          provider_config: %{"region" => "us-east-1"},
+          instance_wide: false,
+          user_id: admin.id
+        })
+
+      assert LlmProviders.get_bedrock_credentials() == nil
+    end
+
+    test "defaults region to us-east-1 when not in config", %{admin: admin} do
+      {:ok, _} =
+        LlmProviders.create_provider(%{
+          name: "No Region Bedrock #{System.unique_integer([:positive])}",
+          provider_type: "amazon_bedrock",
+          api_key: "key-no-region",
+          provider_config: %{},
+          instance_wide: true,
+          user_id: admin.id
+        })
+
+      creds = LlmProviders.get_bedrock_credentials()
+      assert creds.api_key == "key-no-region"
+      assert creds.region == "us-east-1"
+    end
+  end
+
   # --- Encrypted fields round-trip ---
 
   describe "encrypted fields" do

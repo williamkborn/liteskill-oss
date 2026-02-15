@@ -1,19 +1,20 @@
 defmodule LiteskillWeb.AgentStudioComponents do
   @moduledoc """
-  Components for the Agent Studio pages: Agents, Teams, Instances, Schedules.
+  Components for the Agent Studio pages: Agents, Teams, Runs, Schedules.
   """
 
   use LiteskillWeb, :html
 
   alias Liteskill.Agents.AgentDefinition
   alias Liteskill.Teams.TeamDefinition
-  alias Liteskill.Instances.Instance
+  alias Liteskill.Runs.Run
 
   # ---- Full-Page Form Wrappers ----
 
   attr :form, :map, required: true
   attr :editing, :any, default: nil
   attr :available_models, :list, default: []
+  attr :available_mcp_servers, :list, default: []
   attr :sidebar_open, :boolean, default: true
 
   def agent_form_page(assigns) do
@@ -46,6 +47,11 @@ defmodule LiteskillWeb.AgentStudioComponents do
             <.link navigate={~p"/agents"} class="btn btn-ghost">Cancel</.link>
           </div>
         </.form>
+        <.agent_tools_section
+          :if={@editing}
+          agent={@editing}
+          available_mcp_servers={@available_mcp_servers}
+        />
       </div>
     </div>
     """
@@ -53,6 +59,7 @@ defmodule LiteskillWeb.AgentStudioComponents do
 
   attr :form, :map, required: true
   attr :editing, :any, default: nil
+  attr :available_agents, :list, default: []
   attr :sidebar_open, :boolean, default: true
 
   def team_form_page(assigns) do
@@ -85,6 +92,11 @@ defmodule LiteskillWeb.AgentStudioComponents do
             <.link navigate={~p"/teams"} class="btn btn-ghost">Cancel</.link>
           </div>
         </.form>
+        <.team_members_section
+          :if={@editing}
+          team={@editing}
+          available_agents={@available_agents}
+        />
       </div>
     </div>
     """
@@ -94,7 +106,7 @@ defmodule LiteskillWeb.AgentStudioComponents do
   attr :teams, :list, default: []
   attr :sidebar_open, :boolean, default: true
 
-  def instance_form_page(assigns) do
+  def run_form_page(assigns) do
     ~H"""
     <header class="px-4 py-3 border-b border-base-300 flex-shrink-0">
       <div class="flex items-center gap-2">
@@ -105,21 +117,21 @@ defmodule LiteskillWeb.AgentStudioComponents do
         >
           <.icon name="hero-bars-3-micro" class="size-5" />
         </button>
-        <.link navigate={~p"/instances"} class="btn btn-ghost btn-sm btn-circle">
+        <.link navigate={~p"/runs"} class="btn btn-ghost btn-sm btn-circle">
           <.icon name="hero-arrow-left-micro" class="size-4" />
         </.link>
         <h1 class="text-xl tracking-wide" style="font-family: 'Bebas Neue', sans-serif;">
-          New Instance
+          New Run
         </h1>
       </div>
     </header>
     <div class="flex-1 overflow-y-auto p-6">
       <div class="max-w-3xl">
-        <.form for={@form} phx-submit="save_instance" class="space-y-6">
-          <.instance_form_fields form={@form} teams={@teams} />
+        <.form for={@form} phx-submit="save_run" class="space-y-6">
+          <.run_form_fields form={@form} teams={@teams} />
           <div class="flex items-center gap-3 pt-4 border-t border-base-200">
-            <button type="submit" class="btn btn-primary">Create Instance</button>
-            <.link navigate={~p"/instances"} class="btn btn-ghost">Cancel</.link>
+            <button type="submit" class="btn btn-primary">Create Run</button>
+            <.link navigate={~p"/runs"} class="btn btn-ghost">Cancel</.link>
           </div>
         </.form>
       </div>
@@ -518,64 +530,207 @@ defmodule LiteskillWeb.AgentStudioComponents do
     """
   end
 
-  # ---- Instances ----
+  attr :agent, :map, required: true
+  attr :available_mcp_servers, :list, default: []
 
-  attr :instances, :list, required: true
+  def agent_tools_section(assigns) do
+    builtin_ids = get_in(assigns.agent.config, ["builtin_server_ids"]) || []
+
+    builtin_servers =
+      Liteskill.BuiltinTools.virtual_servers()
+      |> Enum.filter(&(&1.id in builtin_ids))
+
+    assigns =
+      assign(assigns, :assigned_servers, build_assigned_servers(assigns.agent, builtin_servers))
+
+    ~H"""
+    <div class="mt-8 pt-6 border-t border-base-200">
+      <h2 class="text-lg font-semibold mb-4">MCP Servers</h2>
+
+      <div :if={@assigned_servers != []} class="space-y-2 mb-4">
+        <div
+          :for={server <- @assigned_servers}
+          class="flex items-center justify-between bg-base-200 rounded-lg p-3"
+        >
+          <div class="flex items-center gap-3">
+            <.icon name="hero-server-micro" class="size-4 text-base-content/50" />
+            <span class="font-medium">{server.name}</span>
+            <span :if={server.builtin} class="badge badge-ghost badge-xs">builtin</span>
+            <span
+              :if={server.description}
+              class="text-xs text-base-content/50 truncate max-w-xs"
+            >
+              {server.description}
+            </span>
+          </div>
+          <button
+            type="button"
+            phx-click="remove_agent_tool"
+            phx-value-server_id={server.id}
+            class="btn btn-ghost btn-xs text-error"
+          >
+            <.icon name="hero-x-mark-micro" class="size-4" />
+          </button>
+        </div>
+      </div>
+
+      <p :if={@assigned_servers == []} class="text-sm text-base-content/50 mb-4">
+        No MCP servers assigned. Add servers below to give this agent access to tools.
+      </p>
+
+      <form
+        :if={@available_mcp_servers != []}
+        phx-submit="add_agent_tool"
+        class="flex items-end gap-2"
+      >
+        <div class="flex-1">
+          <label class="label"><span class="label-text font-medium">Add Server</span></label>
+          <select name="server_id" class="select select-bordered w-full" required>
+            <option value="">Select a server...</option>
+            <option :for={server <- @available_mcp_servers} value={server.id}>
+              {server.name}{if Map.has_key?(server, :builtin), do: " (builtin)", else: ""}
+            </option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-primary">
+          <.icon name="hero-plus-micro" class="size-4" /> Add
+        </button>
+      </form>
+
+      <p
+        :if={@available_mcp_servers == [] && @assigned_servers != []}
+        class="text-sm text-base-content/50"
+      >
+        All available servers are already assigned to this agent.
+      </p>
+    </div>
+    """
+  end
+
+  attr :team, :map, required: true
+  attr :available_agents, :list, default: []
+
+  def team_members_section(assigns) do
+    ~H"""
+    <div class="mt-8 pt-6 border-t border-base-200">
+      <h2 class="text-lg font-semibold mb-4">Agent Roster</h2>
+
+      <div :if={@team.team_members != []} class="space-y-2 mb-4">
+        <div
+          :for={member <- @team.team_members}
+          class="flex items-center justify-between bg-base-200 rounded-lg p-3"
+        >
+          <div class="flex items-center gap-3">
+            <span class="badge badge-ghost badge-sm w-6 text-center font-mono">
+              {member.position + 1}
+            </span>
+            <span class="font-medium">{member.agent_definition.name}</span>
+            <span class="badge badge-outline badge-xs">{member.role}</span>
+            <span
+              :if={member.agent_definition.strategy}
+              class="badge badge-ghost badge-xs"
+            >
+              {member.agent_definition.strategy}
+            </span>
+          </div>
+          <button
+            type="button"
+            phx-click="remove_team_member"
+            phx-value-agent_id={member.agent_definition_id}
+            class="btn btn-ghost btn-xs text-error"
+          >
+            <.icon name="hero-x-mark-micro" class="size-4" />
+          </button>
+        </div>
+      </div>
+
+      <p :if={@team.team_members == []} class="text-sm text-base-content/50 mb-4">
+        No agents in this team yet. Add agents below.
+      </p>
+
+      <form :if={@available_agents != []} phx-submit="add_team_member" class="flex items-end gap-2">
+        <div class="flex-1">
+          <label class="label"><span class="label-text font-medium">Add Agent</span></label>
+          <select name="agent_id" class="select select-bordered w-full" required>
+            <option value="">Select an agent...</option>
+            <option :for={agent <- @available_agents} value={agent.id}>
+              {agent.name}{if agent.strategy, do: " (#{agent.strategy})", else: ""}
+            </option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-primary">
+          <.icon name="hero-plus-micro" class="size-4" /> Add
+        </button>
+      </form>
+
+      <p
+        :if={@available_agents == [] && @team.team_members != []}
+        class="text-sm text-base-content/50"
+      >
+        All available agents are already in this team.
+      </p>
+    </div>
+    """
+  end
+
+  # ---- Runs ----
+
+  attr :runs, :list, required: true
   attr :current_user, :map, required: true
 
-  def instances_list(assigns) do
+  def runs_list(assigns) do
     ~H"""
-    <div :if={@instances != []} class="space-y-3">
-      <.instance_row
-        :for={instance <- @instances}
-        instance={instance}
-        owned={instance.user_id == @current_user.id}
+    <div :if={@runs != []} class="space-y-3">
+      <.run_row
+        :for={run <- @runs}
+        run={run}
+        owned={run.user_id == @current_user.id}
       />
     </div>
-    <p :if={@instances == []} class="text-base-content/50 text-center py-12">
-      No instances yet. Create one to run a task.
+    <p :if={@runs == []} class="text-base-content/50 text-center py-12">
+      No runs yet. Create one to run a task.
     </p>
     """
   end
 
-  attr :instance, :map, required: true
+  attr :run, :map, required: true
   attr :owned, :boolean, default: false
 
-  def instance_row(assigns) do
+  def run_row(assigns) do
     ~H"""
     <div class="card bg-base-100 border border-base-300 p-4">
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-3 flex-1 min-w-0">
-          <span class={["badge badge-sm", status_badge(@instance.status)]}>
-            {@instance.status}
+          <span class={["badge badge-sm", status_badge(@run.status)]}>
+            {@run.status}
           </span>
           <.link
-            navigate={~p"/instances/#{@instance.id}"}
+            navigate={~p"/runs/#{@run.id}"}
             class="font-medium hover:text-primary transition-colors truncate"
           >
-            {@instance.name}
+            {@run.name}
           </.link>
-          <span :if={@instance.team_definition} class="text-xs text-base-content/50">
-            {@instance.team_definition.name}
+          <span :if={@run.team_definition} class="text-xs text-base-content/50">
+            {@run.team_definition.name}
           </span>
         </div>
         <div class="flex items-center gap-2">
-          <span class="badge badge-ghost badge-xs">{@instance.topology}</span>
+          <span class="badge badge-ghost badge-xs">{@run.topology}</span>
           <span class="text-xs text-base-content/50">
-            {Calendar.strftime(@instance.inserted_at, "%b %d, %H:%M")}
+            {Calendar.strftime(@run.inserted_at, "%b %d, %H:%M")}
           </span>
           <button
             :if={@owned}
-            phx-click="confirm_delete_instance"
-            phx-value-id={@instance.id}
+            phx-click="confirm_delete_run"
+            phx-value-id={@run.id}
             class="btn btn-ghost btn-xs text-error"
           >
             <.icon name="hero-trash-micro" class="size-3" />
           </button>
         </div>
       </div>
-      <p :if={@instance.description} class="text-sm text-base-content/60 mt-1 truncate">
-        {@instance.description}
+      <p :if={@run.description} class="text-sm text-base-content/60 mt-1 truncate">
+        {@run.description}
       </p>
     </div>
     """
@@ -584,7 +739,7 @@ defmodule LiteskillWeb.AgentStudioComponents do
   attr :form, :map, required: true
   attr :teams, :list, default: []
 
-  def instance_form_fields(assigns) do
+  def run_form_fields(assigns) do
     ~H"""
     <div class="space-y-5">
       <div>
@@ -604,7 +759,7 @@ defmodule LiteskillWeb.AgentStudioComponents do
         <textarea
           name={@form[:description].name}
           class="textarea textarea-bordered w-full h-20"
-          placeholder="What this instance will accomplish"
+          placeholder="What this run will accomplish"
         >{@form[:description].value}</textarea>
       </div>
 
@@ -637,7 +792,7 @@ defmodule LiteskillWeb.AgentStudioComponents do
           <label class="label"><span class="label-text font-medium">Topology</span></label>
           <select name={@form[:topology].name} class="select select-bordered w-full">
             <option
-              :for={t <- Instance.valid_topologies()}
+              :for={t <- Run.valid_topologies()}
               value={t}
               selected={@form[:topology].value == t}
             >
@@ -688,7 +843,7 @@ defmodule LiteskillWeb.AgentStudioComponents do
       />
     </div>
     <p :if={@schedules == []} class="text-base-content/50 text-center py-12">
-      No schedules yet. Create one to run instances on a recurring basis.
+      No schedules yet. Create one to execute runs on a recurring basis.
     </p>
     """
   end
@@ -829,7 +984,7 @@ defmodule LiteskillWeb.AgentStudioComponents do
           <label class="label"><span class="label-text font-medium">Topology</span></label>
           <select name={@form[:topology].name} class="select select-bordered w-full">
             <option
-              :for={t <- Instance.valid_topologies()}
+              :for={t <- Run.valid_topologies()}
               value={t}
               selected={@form[:topology].value == t}
             >
@@ -857,4 +1012,23 @@ defmodule LiteskillWeb.AgentStudioComponents do
   defp status_badge("failed"), do: "badge-error"
   defp status_badge("cancelled"), do: "badge-warning"
   defp status_badge(_), do: "badge-ghost"
+
+  defp build_assigned_servers(agent, builtin_servers) do
+    db_entries =
+      Enum.map(agent.agent_tools, fn tool ->
+        %{
+          id: tool.mcp_server_id,
+          name: tool.mcp_server.name,
+          description: tool.mcp_server.description,
+          builtin: false
+        }
+      end)
+
+    builtin_entries =
+      Enum.map(builtin_servers, fn s ->
+        %{id: s.id, name: s.name, description: s.description, builtin: true}
+      end)
+
+    db_entries ++ builtin_entries
+  end
 end

@@ -93,6 +93,82 @@ defmodule Liteskill.LlmProviders do
     Repo.get!(LlmProvider, id)
   end
 
+  # --- Environment bootstrap ---
+
+  @env_provider_name "Bedrock (environment)"
+
+  @doc """
+  Creates or updates an instance-wide Bedrock provider from env var config.
+
+  Called on application boot (non-test). If `bedrock_bearer_token` is set in
+  app config, finds-or-creates a provider named "Bedrock (environment)" owned
+  by the admin user. Idempotent — safe to call on every boot.
+  """
+  def ensure_env_providers do
+    config = Application.get_env(:liteskill, Liteskill.LLM, [])
+    token = Keyword.get(config, :bedrock_bearer_token)
+
+    if token do
+      region = Keyword.get(config, :bedrock_region, "us-east-1")
+      admin = Liteskill.Accounts.get_user_by_email(Liteskill.Accounts.User.admin_email())
+
+      if admin do
+        upsert_env_provider(admin.id, token, region)
+      end
+    end
+
+    :ok
+  end
+
+  defp upsert_env_provider(admin_id, token, region) do
+    case Repo.get_by(LlmProvider, name: @env_provider_name, user_id: admin_id) do
+      nil ->
+        create_provider(%{
+          name: @env_provider_name,
+          provider_type: "amazon_bedrock",
+          api_key: token,
+          provider_config: %{"region" => region},
+          instance_wide: true,
+          user_id: admin_id
+        })
+
+      provider ->
+        provider
+        |> LlmProvider.changeset(%{
+          api_key: token,
+          provider_config: %{"region" => region},
+          status: "active"
+        })
+        |> Repo.update()
+    end
+  end
+
+  @doc """
+  Returns Bedrock credentials from the first active instance-wide Bedrock provider.
+
+  Returns `%{api_key: token, region: region}` or `nil` if none found.
+  """
+  def get_bedrock_credentials do
+    query =
+      from p in LlmProvider,
+        where:
+          p.provider_type == "amazon_bedrock" and
+            p.instance_wide == true and
+            p.status == "active",
+        limit: 1
+
+    case Repo.one(query) do
+      nil ->
+        nil
+
+      provider ->
+        %{
+          api_key: provider.api_key,
+          region: get_in(provider.provider_config, ["region"]) || "us-east-1"
+        }
+    end
+  end
+
   # --- Private ---
 
   defp authorize_owner(%LlmProvider{user_id: user_id} = provider, user_id), do: {:ok, provider}

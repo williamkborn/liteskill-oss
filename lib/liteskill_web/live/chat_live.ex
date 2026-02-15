@@ -368,9 +368,10 @@ defmodule LiteskillWeb.ChatLive do
               :team_new,
               :team_show,
               :team_edit,
-              :instances,
-              :instance_new,
-              :instance_show,
+              :runs,
+              :run_new,
+              :run_show,
+              :run_log_show,
               :schedules,
               :schedule_new,
               :schedule_show
@@ -610,16 +611,16 @@ defmodule LiteskillWeb.ChatLive do
             <.icon name="hero-user-group-micro" class="size-4" /> Teams
           </.link>
           <.link
-            navigate={~p"/instances"}
+            navigate={~p"/runs"}
             class={[
               "flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm transition-colors",
-              if(@live_action in [:instances, :instance_new, :instance_show],
+              if(@live_action in [:runs, :run_new, :run_show],
                 do: "bg-primary/10 text-primary font-medium",
                 else: "hover:bg-base-200 text-base-content/70"
               )
             ]}
           >
-            <.icon name="hero-play-circle-micro" class="size-4" /> Instances
+            <.icon name="hero-play-circle-micro" class="size-4" /> Runs
           </.link>
           <.link
             navigate={~p"/schedules"}
@@ -1705,6 +1706,7 @@ defmodule LiteskillWeb.ChatLive do
             form={@agent_form}
             editing={@editing_agent}
             available_models={@available_llm_models}
+            available_mcp_servers={assigns[:available_mcp_servers] || []}
             sidebar_open={@sidebar_open}
           />
         <% end %>
@@ -1807,6 +1809,7 @@ defmodule LiteskillWeb.ChatLive do
           <AgentStudioComponents.team_form_page
             form={@team_form}
             editing={@editing_team}
+            available_agents={assigns[:available_agents] || []}
             sidebar_open={@sidebar_open}
           />
         <% end %>
@@ -1880,8 +1883,8 @@ defmodule LiteskillWeb.ChatLive do
             </div>
           </div>
         <% end %>
-        <%!-- Agent Studio: Instances --%>
-        <%= if @live_action == :instances do %>
+        <%!-- Agent Studio: Runs --%>
+        <%= if @live_action == :runs do %>
           <header class="px-4 py-3 border-b border-base-300 flex-shrink-0">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
@@ -1893,39 +1896,39 @@ defmodule LiteskillWeb.ChatLive do
                   <.icon name="hero-bars-3-micro" class="size-5" />
                 </button>
                 <h1 class="text-xl tracking-wide" style="font-family: 'Bebas Neue', sans-serif;">
-                  Instances
+                  Runs
                 </h1>
               </div>
-              <.link navigate={~p"/instances/new"} class="btn btn-primary btn-sm gap-1">
-                <.icon name="hero-plus-micro" class="size-4" /> New Instance
+              <.link navigate={~p"/runs/new"} class="btn btn-primary btn-sm gap-1">
+                <.icon name="hero-plus-micro" class="size-4" /> New Run
               </.link>
             </div>
           </header>
           <div class="flex-1 overflow-y-auto p-4">
-            <AgentStudioComponents.instances_list
-              instances={@studio_instances}
+            <AgentStudioComponents.runs_list
+              runs={@studio_runs}
               current_user={@current_user}
             />
           </div>
           <ChatComponents.confirm_modal
-            :if={@confirm_delete_instance_id}
-            show={@confirm_delete_instance_id != nil}
-            title="Delete Instance"
-            message="Are you sure you want to delete this instance?"
-            confirm_event={"delete_instance|#{@confirm_delete_instance_id}"}
-            cancel_event="cancel_delete_instance"
+            :if={@confirm_delete_run_id}
+            show={@confirm_delete_run_id != nil}
+            title="Delete Run"
+            message="Are you sure you want to delete this run?"
+            confirm_event={"delete_run|#{@confirm_delete_run_id}"}
+            cancel_event="cancel_delete_run"
           />
         <% end %>
-        <%!-- Agent Studio: New Instance --%>
-        <%= if @live_action == :instance_new do %>
-          <AgentStudioComponents.instance_form_page
-            form={@instance_form}
+        <%!-- Agent Studio: New Run --%>
+        <%= if @live_action == :run_new do %>
+          <AgentStudioComponents.run_form_page
+            form={@run_form}
             teams={@studio_teams}
             sidebar_open={@sidebar_open}
           />
         <% end %>
-        <%!-- Agent Studio: Instance Detail --%>
-        <%= if @live_action == :instance_show && @studio_instance do %>
+        <%!-- Agent Studio: Run Detail --%>
+        <%= if @live_action == :run_show && @studio_run do %>
           <header class="px-4 py-3 border-b border-base-300 flex-shrink-0">
             <div class="flex items-center gap-2">
               <button
@@ -1935,24 +1938,34 @@ defmodule LiteskillWeb.ChatLive do
               >
                 <.icon name="hero-bars-3-micro" class="size-5" />
               </button>
-              <.link navigate={~p"/instances"} class="btn btn-ghost btn-sm btn-circle">
+              <.link navigate={~p"/runs"} class="btn btn-ghost btn-sm btn-circle">
                 <.icon name="hero-arrow-left-micro" class="size-4" />
               </.link>
               <h1 class="text-xl tracking-wide" style="font-family: 'Bebas Neue', sans-serif;">
-                {@studio_instance.name}
+                {@studio_run.name}
               </h1>
-              <span class={["badge badge-sm", instance_status_badge(@studio_instance.status)]}>
-                {@studio_instance.status}
+              <span class={["badge badge-sm", run_status_badge(@studio_run.status)]}>
+                {@studio_run.status}
               </span>
               <button
-                :if={
-                  @studio_instance.status == "pending" && @studio_instance.user_id == @current_user.id
-                }
-                phx-click="run_instance"
-                phx-value-id={@studio_instance.id}
+                :if={@studio_run.status == "pending" && @studio_run.user_id == @current_user.id}
+                phx-click="start_run"
+                phx-value-id={@studio_run.id}
                 class="btn btn-primary btn-sm ml-auto"
               >
                 <.icon name="hero-play-micro" class="size-4" /> Run
+              </button>
+              <button
+                :if={
+                  @studio_run.status != "pending" &&
+                    @studio_run.status != "running" &&
+                    @studio_run.user_id == @current_user.id
+                }
+                phx-click="rerun"
+                phx-value-id={@studio_run.id}
+                class="btn btn-outline btn-sm ml-auto"
+              >
+                <.icon name="hero-arrow-path-micro" class="size-4" /> Rerun
               </button>
             </div>
           </header>
@@ -1960,33 +1973,40 @@ defmodule LiteskillWeb.ChatLive do
             <div class="max-w-3xl space-y-6">
               <div class="bg-base-200 rounded-lg p-4">
                 <h3 class="text-sm font-semibold text-base-content/60 mb-2">Prompt</h3>
-                <p class="text-sm whitespace-pre-wrap">{@studio_instance.prompt}</p>
+                <p class="text-sm whitespace-pre-wrap">{@studio_run.prompt}</p>
               </div>
               <div class="grid grid-cols-3 gap-4">
                 <div class="bg-base-200 rounded-lg p-4">
                   <h3 class="text-sm font-semibold text-base-content/60 mb-1">Topology</h3>
-                  <p>{@studio_instance.topology}</p>
+                  <p>{@studio_run.topology}</p>
                 </div>
                 <div class="bg-base-200 rounded-lg p-4">
                   <h3 class="text-sm font-semibold text-base-content/60 mb-1">Team</h3>
                   <p>
-                    {if @studio_instance.team_definition,
-                      do: @studio_instance.team_definition.name,
+                    {if @studio_run.team_definition,
+                      do: @studio_run.team_definition.name,
                       else: "None"}
                   </p>
                 </div>
                 <div class="bg-base-200 rounded-lg p-4">
                   <h3 class="text-sm font-semibold text-base-content/60 mb-1">Status</h3>
-                  <p>{@studio_instance.status}</p>
+                  <p>{@studio_run.status}</p>
                 </div>
               </div>
-              <div :if={@studio_instance.instance_tasks != []}>
+              <div
+                :if={@studio_run.status == "failed" && @studio_run.error}
+                class="bg-error/10 border border-error/30 rounded-lg p-4"
+              >
+                <h3 class="text-sm font-semibold text-error mb-1">Error</h3>
+                <p class="text-sm font-mono whitespace-pre-wrap">{@studio_run.error}</p>
+              </div>
+              <div :if={@studio_run.run_tasks != []}>
                 <h3 class="text-sm font-semibold text-base-content/60 mb-2">
-                  Tasks ({length(@studio_instance.instance_tasks)})
+                  Tasks ({length(@studio_run.run_tasks)})
                 </h3>
                 <div class="space-y-2">
                   <div
-                    :for={task <- @studio_instance.instance_tasks}
+                    :for={task <- @studio_run.run_tasks}
                     class="bg-base-200 rounded-lg p-3 flex items-center justify-between"
                   >
                     <div class="flex items-center gap-2">
@@ -1999,16 +2019,182 @@ defmodule LiteskillWeb.ChatLive do
                   </div>
                 </div>
               </div>
-              <div :if={@studio_instance.deliverables["report_id"]}>
+              <div :if={@studio_run.deliverables["report_id"]}>
                 <h3 class="text-sm font-semibold text-base-content/60 mb-2">Deliverables</h3>
                 <div class="bg-base-200 rounded-lg p-4">
                   <.link
-                    navigate={~p"/reports/#{@studio_instance.deliverables["report_id"]}"}
+                    navigate={~p"/reports/#{@studio_run.deliverables["report_id"]}"}
                     class="btn btn-sm btn-primary gap-2"
                   >
                     <.icon name="hero-document-text-micro" class="size-4" /> View Report
                   </.link>
                 </div>
+              </div>
+              <div :if={@studio_run.run_logs != []}>
+                <div class="flex items-center justify-between mb-2">
+                  <h3 class="text-sm font-semibold text-base-content/60">
+                    Execution Log ({length(@studio_run.run_logs)})
+                  </h3>
+                </div>
+                <div class="bg-base-300 rounded-lg overflow-hidden font-mono text-xs">
+                  <.link
+                    :for={entry <- @studio_run.run_logs}
+                    navigate={~p"/runs/#{@studio_run.id}/logs/#{entry.id}"}
+                    class="block border-b border-base-content/5 last:border-0 px-3 py-2 hover:bg-base-content/10 cursor-pointer transition-colors"
+                  >
+                    <div class="flex items-start gap-2">
+                      <span class={[
+                        "badge badge-xs shrink-0 mt-0.5",
+                        log_level_badge(entry.level)
+                      ]}>
+                        {entry.level}
+                      </span>
+                      <span class="text-base-content/40 shrink-0">
+                        {Calendar.strftime(entry.inserted_at, "%H:%M:%S")}
+                      </span>
+                      <span class="badge badge-ghost badge-xs shrink-0">{entry.step}</span>
+                      <span class="text-base-content/90">{entry.message}</span>
+                    </div>
+                  </.link>
+                </div>
+              </div>
+            </div>
+          </div>
+        <% end %>
+        <%!-- Agent Studio: Run Log Detail --%>
+        <%= if @live_action == :run_log_show do %>
+          <header class="px-4 py-3 border-b border-base-300 flex-shrink-0">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <button
+                  :if={!@sidebar_open}
+                  phx-click="toggle_sidebar"
+                  class="btn btn-circle btn-ghost btn-sm"
+                >
+                  <.icon name="hero-bars-3-micro" class="size-5" />
+                </button>
+                <.link
+                  navigate={~p"/runs/#{@studio_run.id}"}
+                  class="btn btn-ghost btn-sm gap-1"
+                >
+                  <.icon name="hero-arrow-left-micro" class="size-4" />
+                  {raw(@studio_run.name)}
+                </.link>
+                <span class="text-base-content/40">/</span>
+                <span class="font-semibold">Log: {@studio_log.step}</span>
+              </div>
+            </div>
+          </header>
+          <div class="flex-1 overflow-y-auto p-4">
+            <div class="max-w-3xl mx-auto space-y-4">
+              <div class="bg-base-200 rounded-xl p-6 space-y-4">
+                <div class="flex items-center gap-3">
+                  <span class={[
+                    "badge",
+                    log_level_badge(@studio_log.level)
+                  ]}>
+                    {@studio_log.level}
+                  </span>
+                  <span class="badge badge-ghost">{@studio_log.step}</span>
+                  <span class="text-sm text-base-content/50">
+                    {Calendar.strftime(@studio_log.inserted_at, "%Y-%m-%d %H:%M:%S UTC")}
+                  </span>
+                </div>
+
+                <div>
+                  <h4 class="text-xs font-semibold text-base-content/50 uppercase mb-1">Message</h4>
+                  <p class="text-base-content whitespace-pre-wrap">{@studio_log.message}</p>
+                </div>
+
+                <%= if not is_list(@studio_log.metadata["messages"]) do %>
+                  <div>
+                    <h4 class="text-xs font-semibold text-base-content/50 uppercase mb-1">
+                      Metadata
+                    </h4>
+                    <%= if @studio_log.metadata == %{} do %>
+                      <p class="text-base-content/40 italic">No metadata</p>
+                    <% else %>
+                      <pre class="bg-base-300 rounded-lg p-4 text-xs font-mono overflow-x-auto whitespace-pre-wrap break-all"><code>{Jason.encode!(@studio_log.metadata, pretty: true)}</code></pre>
+                    <% end %>
+                  </div>
+                <% end %>
+              </div>
+
+              <%= if is_list(@studio_log.metadata["messages"]) do %>
+                <div>
+                  <h4 class="text-sm font-semibold text-base-content/60 mb-3">
+                    Context Window ({length(@studio_log.metadata["messages"])} messages)
+                  </h4>
+                  <div class="space-y-3">
+                    <div
+                      :for={msg <- @studio_log.metadata["messages"]}
+                      class={[
+                        "rounded-lg p-4",
+                        log_chat_role_class(msg["role"])
+                      ]}
+                    >
+                      <div class="flex items-center gap-2 mb-2">
+                        <span class={[
+                          "badge badge-sm",
+                          log_chat_role_badge(msg["role"])
+                        ]}>
+                          {msg["role"]}
+                        </span>
+                        <span
+                          :if={msg["name"]}
+                          class="text-xs text-base-content/50"
+                        >
+                          {msg["name"]}
+                        </span>
+                      </div>
+                      <div class="whitespace-pre-wrap break-words text-sm">
+                        {log_chat_message_content(msg)}
+                      </div>
+                      <%= if is_list(msg["tool_calls"]) and msg["tool_calls"] != [] do %>
+                        <div class="mt-3 space-y-2">
+                          <div
+                            :for={tc <- msg["tool_calls"]}
+                            class="bg-base-300 rounded-lg p-3 text-xs font-mono"
+                          >
+                            <div class="font-semibold text-primary mb-1">
+                              Tool call: {get_in(tc, ["function", "name"]) || tc["name"]}
+                            </div>
+                            <pre class="whitespace-pre-wrap break-all text-base-content/70">{format_tool_call_args(tc)}</pre>
+                          </div>
+                        </div>
+                      <% end %>
+                    </div>
+                  </div>
+                </div>
+              <% end %>
+
+              <% logs = @studio_run.run_logs
+              idx = Enum.find_index(logs, &(&1.id == @studio_log.id))
+              prev_log = if idx && idx > 0, do: Enum.at(logs, idx - 1)
+              next_log = if idx, do: Enum.at(logs, idx + 1) %>
+              <div class="flex items-center justify-between">
+                <%= if prev_log do %>
+                  <.link
+                    navigate={~p"/runs/#{@studio_run.id}/logs/#{prev_log.id}"}
+                    class="btn btn-ghost btn-sm gap-1"
+                  >
+                    <.icon name="hero-arrow-left-micro" class="size-4" />
+                    {prev_log.step}
+                  </.link>
+                <% else %>
+                  <div />
+                <% end %>
+                <%= if next_log do %>
+                  <.link
+                    navigate={~p"/runs/#{@studio_run.id}/logs/#{next_log.id}"}
+                    class="btn btn-ghost btn-sm gap-1"
+                  >
+                    {next_log.step}
+                    <.icon name="hero-arrow-right-micro" class="size-4" />
+                  </.link>
+                <% else %>
+                  <div />
+                <% end %>
               </div>
             </div>
           </div>
@@ -2110,7 +2296,7 @@ defmodule LiteskillWeb.ChatLive do
             </div>
           </div>
         <% end %>
-        <%= if @live_action not in [:sources, :source_show, :source_document_show, :wiki, :wiki_page_show, :mcp_servers, :reports, :report_show, :conversations, :pipeline, :agents, :agent_new, :agent_show, :agent_edit, :teams, :team_new, :team_show, :team_edit, :instances, :instance_new, :instance_show, :schedules, :schedule_new, :schedule_show] and not ProfileLive.profile_action?(@live_action) do %>
+        <%= if @live_action not in [:sources, :source_show, :source_document_show, :wiki, :wiki_page_show, :mcp_servers, :reports, :report_show, :conversations, :pipeline, :agents, :agent_new, :agent_show, :agent_edit, :teams, :team_new, :team_show, :team_edit, :runs, :run_new, :run_show, :run_log_show, :schedules, :schedule_new, :schedule_show] and not ProfileLive.profile_action?(@live_action) do %>
           <%= if @conversation do %>
             <%!-- Active conversation --%>
             <div class="flex flex-1 min-w-0 overflow-hidden">
@@ -2715,8 +2901,9 @@ defmodule LiteskillWeb.ChatLive do
   # --- Agent Studio Event Delegation ---
 
   @studio_events ~w(save_agent confirm_delete_agent cancel_delete_agent
-    save_team confirm_delete_team cancel_delete_team
-    save_instance run_instance confirm_delete_instance cancel_delete_instance
+    add_agent_tool remove_agent_tool
+    save_team confirm_delete_team cancel_delete_team add_team_member remove_team_member
+    save_run start_run rerun confirm_delete_run cancel_delete_run
     save_schedule toggle_schedule confirm_delete_schedule cancel_delete_schedule)
 
   @impl true
@@ -2735,8 +2922,8 @@ defmodule LiteskillWeb.ChatLive do
   end
 
   @impl true
-  def handle_event("delete_instance|" <> id, _params, socket) do
-    AgentStudioLive.handle_studio_event("delete_instance", %{"id" => id}, socket)
+  def handle_event("delete_run|" <> id, _params, socket) do
+    AgentStudioLive.handle_studio_event("delete_run", %{"id" => id}, socket)
   end
 
   @impl true
@@ -4273,12 +4460,63 @@ defmodule LiteskillWeb.ChatLive do
     end
   end
 
-  defp instance_status_badge("pending"), do: "badge-ghost"
-  defp instance_status_badge("running"), do: "badge-info"
-  defp instance_status_badge("completed"), do: "badge-success"
-  defp instance_status_badge("failed"), do: "badge-error"
-  defp instance_status_badge("cancelled"), do: "badge-warning"
-  defp instance_status_badge(_), do: "badge-ghost"
+  defp run_status_badge("pending"), do: "badge-ghost"
+  defp run_status_badge("running"), do: "badge-info"
+  defp run_status_badge("completed"), do: "badge-success"
+  defp run_status_badge("failed"), do: "badge-error"
+  defp run_status_badge("cancelled"), do: "badge-warning"
+  defp run_status_badge(_), do: "badge-ghost"
+
+  defp log_level_badge("error"), do: "badge-error"
+  defp log_level_badge("warn"), do: "badge-warning"
+  defp log_level_badge("info"), do: "badge-info"
+  defp log_level_badge("debug"), do: "badge-ghost"
+  defp log_level_badge(_), do: "badge-ghost"
+
+  defp log_chat_role_class("system"), do: "bg-warning/10 border border-warning/20"
+  defp log_chat_role_class("user"), do: "bg-primary/10 border border-primary/20"
+  defp log_chat_role_class("assistant"), do: "bg-base-200 border border-base-300"
+  defp log_chat_role_class("tool"), do: "bg-success/10 border border-success/20"
+  defp log_chat_role_class(_), do: "bg-base-200"
+
+  defp log_chat_role_badge("system"), do: "badge-warning"
+  defp log_chat_role_badge("user"), do: "badge-primary"
+  defp log_chat_role_badge("assistant"), do: "badge-neutral"
+  defp log_chat_role_badge("tool"), do: "badge-success"
+  defp log_chat_role_badge(_), do: "badge-ghost"
+
+  defp log_chat_message_content(%{"role" => "system", "content" => content})
+       when is_binary(content),
+       do: content
+
+  defp log_chat_message_content(%{"content" => content}) when is_list(content) do
+    content
+    |> Enum.map(fn
+      %{"text" => text} -> text
+      other -> Jason.encode!(other)
+    end)
+    |> Enum.join("\n")
+  end
+
+  defp log_chat_message_content(%{"content" => content}) when is_binary(content), do: content
+  defp log_chat_message_content(_), do: ""
+
+  defp format_tool_call_args(%{"function" => %{"arguments" => args}}) when is_binary(args) do
+    case Jason.decode(args) do
+      {:ok, decoded} -> Jason.encode!(decoded, pretty: true)
+      _ -> args
+    end
+  end
+
+  defp format_tool_call_args(%{"function" => %{"arguments" => args}}) when is_map(args) do
+    Jason.encode!(args, pretty: true)
+  end
+
+  defp format_tool_call_args(%{"input" => input}) when is_map(input) do
+    Jason.encode!(input, pretty: true)
+  end
+
+  defp format_tool_call_args(_), do: ""
 
   defp maybe_unsubscribe(socket) do
     case socket.assigns[:conversation] do

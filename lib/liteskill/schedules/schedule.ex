@@ -1,6 +1,6 @@
 defmodule Liteskill.Schedules.Schedule do
   @moduledoc """
-  Schema for schedules — cron-like scheduling that creates instances on a recurring basis.
+  Schema for schedules — cron-like scheduling that creates runs on a recurring basis.
   """
 
   use Ecto.Schema

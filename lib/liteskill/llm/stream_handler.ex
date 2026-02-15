@@ -276,7 +276,7 @@ defmodule Liteskill.LLM.StreamHandler do
     req_opts =
       case llm_model do
         nil ->
-          [provider_options: bedrock_provider_options()]
+          [provider_options: []]
 
         llm_model ->
           {model_spec, model_opts} = Liteskill.LlmModels.build_provider_options(llm_model)
@@ -305,17 +305,6 @@ defmodule Liteskill.LLM.StreamHandler do
       nil -> req_opts
       [] -> req_opts
       tools -> Keyword.put(req_opts, :tools, Enum.map(tools, &convert_tool/1))
-    end
-  end
-
-  defp bedrock_provider_options do
-    config = Application.get_env(:liteskill, Liteskill.LLM, [])
-
-    opts = [region: Keyword.get(config, :bedrock_region, "us-east-1"), use_converse: true]
-
-    case Keyword.get(config, :bedrock_bearer_token) do
-      nil -> opts
-      token -> Keyword.put(opts, :api_key, token)
     end
   end
 

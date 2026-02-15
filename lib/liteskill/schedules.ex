@@ -1,9 +1,9 @@
 defmodule Liteskill.Schedules do
   @moduledoc """
-  Context for managing schedules — cron-like recurring instance execution.
+  Context for managing schedules — cron-like recurring run execution.
 
-  Each schedule defines a cron expression and instance template that creates
-  instances on a recurring basis.
+  Each schedule defines a cron expression and run template that creates
+  runs on a recurring basis.
   """
 
   alias Liteskill.Schedules.Schedule

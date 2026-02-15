@@ -115,7 +115,7 @@ defmodule Liteskill.Rag.CohereClient do
   end
 
   defp base_req do
-    token = config(:bedrock_bearer_token)
+    %{token: token} = resolve_credentials()
 
     Req.new(
       headers: [
@@ -127,13 +127,31 @@ defmodule Liteskill.Rag.CohereClient do
   end
 
   defp invoke_url(model_id) do
-    region = config(:bedrock_region)
+    %{region: region} = resolve_credentials()
     "https://bedrock-runtime.#{region}.amazonaws.com/model/#{URI.encode(model_id)}/invoke"
   end
 
-  defp config(key) do
-    Application.get_env(:liteskill, Liteskill.LLM, [])
-    |> Keyword.get(key)
+  defp resolve_credentials do
+    db_creds =
+      try do
+        Liteskill.LlmProviders.get_bedrock_credentials()
+      rescue
+        # coveralls-ignore-next-line
+        _ -> nil
+      end
+
+    case db_creds do
+      %{api_key: token, region: region} ->
+        %{token: token, region: region}
+
+      nil ->
+        config = Application.get_env(:liteskill, Liteskill.LLM, [])
+
+        %{
+          token: Keyword.get(config, :bedrock_bearer_token),
+          region: Keyword.get(config, :bedrock_region, "us-east-1")
+        }
+    end
   end
 
   defp log_request(nil, _attrs), do: :ok

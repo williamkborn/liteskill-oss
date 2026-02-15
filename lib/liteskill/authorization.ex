@@ -253,7 +253,7 @@ defmodule Liteskill.Authorization do
     "agent_definition" => Liteskill.Agents.AgentDefinition,
     "conversation" => Liteskill.Chat.Conversation,
     "data_source" => Liteskill.DataSources.Source,
-    "instance" => Liteskill.Instances.Instance,
+    "run" => Liteskill.Runs.Run,
     "llm_model" => Liteskill.LlmModels.LlmModel,
     "llm_provider" => Liteskill.LlmProviders.LlmProvider,
     "mcp_server" => Liteskill.McpServers.McpServer,

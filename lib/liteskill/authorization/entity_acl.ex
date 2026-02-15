@@ -26,7 +26,7 @@ defmodule Liteskill.Authorization.EntityAcl do
   @valid_entity_types [
     "agent_definition",
     "conversation",
-    "instance",
+    "run",
     "llm_model",
     "llm_provider",
     "mcp_server",

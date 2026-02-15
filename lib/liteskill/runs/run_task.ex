@@ -1,6 +1,6 @@
-defmodule Liteskill.Instances.InstanceTask do
+defmodule Liteskill.Runs.RunTask do
   @moduledoc """
-  Schema for instance tasks — individual steps within an instance execution.
+  Schema for run tasks — individual steps within a run execution.
   """
 
   use Ecto.Schema
@@ -11,7 +11,7 @@ defmodule Liteskill.Instances.InstanceTask do
 
   @valid_statuses ~w(pending running completed failed skipped)
 
-  schema "instance_tasks" do
+  schema "run_tasks" do
     field :name, :string
     field :description, :string
     field :status, :string, default: "pending"
@@ -23,7 +23,7 @@ defmodule Liteskill.Instances.InstanceTask do
     field :started_at, :utc_datetime
     field :completed_at, :utc_datetime
 
-    belongs_to :instance, Liteskill.Instances.Instance
+    belongs_to :run, Liteskill.Runs.Run
     belongs_to :agent_definition, Liteskill.Agents.AgentDefinition
 
     timestamps(type: :utc_datetime)
@@ -42,12 +42,12 @@ defmodule Liteskill.Instances.InstanceTask do
       :duration_ms,
       :started_at,
       :completed_at,
-      :instance_id,
+      :run_id,
       :agent_definition_id
     ])
-    |> validate_required([:name, :instance_id])
+    |> validate_required([:name, :run_id])
     |> validate_inclusion(:status, @valid_statuses)
-    |> foreign_key_constraint(:instance_id)
+    |> foreign_key_constraint(:run_id)
     |> foreign_key_constraint(:agent_definition_id)
   end
 end
