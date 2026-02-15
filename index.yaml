@@ -2,6 +2,22 @@ apiVersion: v1
 entries:
   liteskill:
   - apiVersion: v2
+    appVersion: 0.2.3
+    created: "2026-02-15T07:17:55.844037786Z"
+    description: Event-sourced chat application with LLM integration
+    digest: 534ce8b7f2b3e74ae0495cc9ea4d9d5075873694b2479b86e8d290ca1a709a48
+    home: https://github.com/liteskill-ai/liteskill-oss
+    maintainers:
+    - name: liteskill-ai
+      url: https://github.com/liteskill-ai
+    name: liteskill
+    sources:
+    - https://github.com/liteskill-ai/liteskill-oss
+    type: application
+    urls:
+    - https://github.com/williamkborn/liteskill-oss/releases/download/liteskill-0.2.3/liteskill-0.2.3.tgz
+    version: 0.2.3
+  - apiVersion: v2
     appVersion: 0.2.0
     created: "2026-02-14T07:22:32.727658229Z"
     description: Event-sourced chat application with LLM integration
@@ -17,4 +33,4 @@ entries:
     urls:
     - https://github.com/williamkborn/liteskill-oss/releases/download/liteskill-0.2.0/liteskill-0.2.0.tgz
     version: 0.2.0
-generated: "2026-02-14T07:22:32.72766415Z"
+generated: "2026-02-15T07:17:55.8440503Z"
