@@ -85,7 +85,14 @@ defmodule LiteskillWeb.AdminLive do
       rag_confirm_change: false,
       rag_confirm_input: "",
       rag_selected_model_id: nil,
-      rag_reembed_in_progress: false
+      rag_reembed_in_progress: false,
+      or_models: nil,
+      or_search: "",
+      or_results: [],
+      or_loading: false,
+      embed_results_all: [],
+      embed_search: "",
+      embed_results: []
     ]
   end
 
@@ -175,8 +182,14 @@ defmodule LiteskillWeb.AdminLive do
       setup_rag_embedding_models: LlmModels.list_all_active_models(model_type: "embedding"),
       setup_rag_current_model: settings.embedding_model,
       setup_provider_view: :presets,
-      setup_openrouter_pending: false
+      setup_openrouter_pending: false,
+      or_models: nil,
+      or_search: "",
+      or_results: [],
+      or_loading: false,
+      embed_search: ""
     )
+    |> load_embed_models()
   end
 
   defp load_tab_data(socket, :admin_providers) do
@@ -353,6 +366,12 @@ defmodule LiteskillWeb.AdminLive do
   attr :rag_confirm_input, :string, default: ""
   attr :rag_selected_model_id, :string, default: nil
   attr :rag_reembed_in_progress, :boolean, default: false
+  attr :or_search, :string, default: ""
+  attr :or_results, :list, default: []
+  attr :or_loading, :boolean, default: false
+  attr :embed_results_all, :list, default: []
+  attr :embed_search, :string, default: ""
+  attr :embed_results, :list, default: []
   attr :settings_mode, :boolean, default: false
   attr :settings_action, :atom, default: nil
   attr :single_user_mode, :boolean, default: false
@@ -552,6 +571,12 @@ defmodule LiteskillWeb.AdminLive do
               llm_models={@setup_llm_models}
               llm_providers={@setup_llm_providers}
               llm_model_form={@setup_llm_model_form}
+              single_user={@single_user_mode}
+              or_search={@or_search}
+              or_results={@or_results}
+              or_loading={@or_loading}
+              embed_search={@embed_search}
+              embed_results={@embed_results}
               error={@setup_error}
             />
           <% :rag -> %>
@@ -1029,13 +1054,14 @@ defmodule LiteskillWeb.AdminLive do
       <div class="card-body">
         <div class="flex items-center justify-between mb-4">
           <h2 class="card-title">LLM Providers</h2>
-          <button
-            :if={!@editing_llm_provider}
-            phx-click="new_llm_provider"
-            class="btn btn-primary btn-sm"
-          >
-            Add Provider
-          </button>
+          <div :if={!@editing_llm_provider} class="flex gap-2">
+            <.link navigate={~p"/admin/setup"} class="btn btn-outline btn-sm">
+              Run Setup Wizard
+            </.link>
+            <button phx-click="new_llm_provider" class="btn btn-primary btn-sm">
+              Add Provider
+            </button>
+          </div>
         </div>
 
         <div :if={@editing_llm_provider} class="mb-6 p-4 border border-base-300 rounded-lg">
@@ -1235,13 +1261,18 @@ defmodule LiteskillWeb.AdminLive do
       <div class="card-body">
         <div class="flex items-center justify-between mb-4">
           <h2 class="card-title">LLM Models</h2>
-          <button
-            :if={!@editing_llm_model && @llm_providers != []}
-            phx-click="new_llm_model"
-            class="btn btn-primary btn-sm"
-          >
-            Add Model
-          </button>
+          <div :if={!@editing_llm_model} class="flex gap-2">
+            <.link navigate={~p"/admin/setup"} class="btn btn-outline btn-sm">
+              Run Setup Wizard
+            </.link>
+            <button
+              :if={@llm_providers != []}
+              phx-click="new_llm_model"
+              class="btn btn-primary btn-sm"
+            >
+              Add Model
+            </button>
+          </div>
         </div>
 
         <div :if={@editing_llm_model} class="mb-6 p-4 border border-base-300 rounded-lg">
@@ -2046,12 +2077,12 @@ defmodule LiteskillWeb.AdminLive do
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6">
           <button
             type="button"
-            disabled
-            class="flex flex-col items-center gap-3 p-6 rounded-xl border-2 border-base-300 opacity-50 cursor-not-allowed"
+            phx-click="setup_providers_show_custom"
+            class="flex flex-col items-center gap-3 p-6 rounded-xl border-2 border-base-300 hover:border-base-content/30 hover:bg-base-200 cursor-pointer transition-all"
           >
-            <span class="text-2xl font-bold">OpenAI</span>
-            <span class="text-sm text-base-content/60">GPT-4o, o1, and more</span>
-            <span class="badge badge-ghost badge-sm">Coming Soon</span>
+            <span class="text-2xl font-bold">Manual Entry</span>
+            <span class="text-sm text-base-content/60">Any OpenAI-compatible provider</span>
+            <span class="badge badge-ghost badge-sm">API Key</span>
           </button>
 
           <button
@@ -2095,26 +2126,17 @@ defmodule LiteskillWeb.AdminLive do
           </div>
         </div>
 
-        <div class="flex flex-col gap-3 mt-6">
+        <div class="flex gap-3 mt-6">
+          <button type="button" phx-click="setup_providers_skip" class="btn btn-ghost flex-1">
+            Skip
+          </button>
           <button
             type="button"
-            phx-click="setup_providers_show_custom"
-            class="btn btn-outline btn-sm w-full"
+            phx-click="setup_providers_continue"
+            class="btn btn-primary flex-1"
           >
-            Other Provider
+            Continue
           </button>
-          <div class="flex gap-3">
-            <button type="button" phx-click="setup_providers_skip" class="btn btn-ghost flex-1">
-              Skip
-            </button>
-            <button
-              type="button"
-              phx-click="setup_providers_continue"
-              class="btn btn-primary flex-1"
-            >
-              Continue
-            </button>
-          </div>
         </div>
       </div>
     </div>
@@ -2233,7 +2255,14 @@ defmodule LiteskillWeb.AdminLive do
 
   defp setup_models_step(assigns) do
     model_types = LlmModels.LlmModel.valid_model_types()
-    assigns = assign(assigns, :model_types, model_types)
+
+    or_provider =
+      Enum.find(assigns.llm_providers, &(&1.provider_type == "openrouter"))
+
+    assigns =
+      assigns
+      |> assign(:model_types, model_types)
+      |> assign(:or_provider, or_provider)
 
     ~H"""
     <div class="card bg-base-100 shadow">
@@ -2250,8 +2279,108 @@ defmodule LiteskillWeb.AdminLive do
             <span>No providers configured. Go back and add a provider first, or skip for now.</span>
           </div>
         <% else %>
+          <div :if={@or_provider} class="mt-4 p-4 border border-primary/20 bg-primary/5 rounded-lg">
+            <h3 class="font-semibold mb-3">Browse OpenRouter Inference Models</h3>
+            <form phx-change="or_search" class="relative">
+              <input
+                type="text"
+                name="or_query"
+                value={@or_search}
+                placeholder="Search models (e.g. claude, gpt, llama)..."
+                class="input input-bordered input-sm w-full"
+                phx-debounce="300"
+                autocomplete="off"
+              />
+              <span :if={@or_loading} class="absolute right-3 top-2">
+                <span class="loading loading-spinner loading-xs"></span>
+              </span>
+            </form>
+            <div
+              :if={@or_results != []}
+              class="mt-2 max-h-64 overflow-y-auto border border-base-300 rounded-lg divide-y divide-base-300"
+            >
+              <button
+                :for={m <- @or_results}
+                type="button"
+                phx-click="or_select_model"
+                phx-value-model-id={m.id}
+                class="flex items-center justify-between w-full px-3 py-2 text-left hover:bg-base-200 transition-colors cursor-pointer"
+              >
+                <div>
+                  <div class="text-sm font-medium">{m.name}</div>
+                  <div class="text-xs text-base-content/50 font-mono">{m.id}</div>
+                </div>
+                <div class="text-right text-xs text-base-content/50 shrink-0 ml-2">
+                  <div :if={m.context_length}>
+                    {div(m.context_length, 1000)}K ctx
+                  </div>
+                  <div :if={m.input_cost_per_million}>
+                    ${Decimal.round(m.input_cost_per_million, 2)}/M in
+                  </div>
+                </div>
+              </button>
+            </div>
+            <p
+              :if={@or_search != "" && @or_results == [] && !@or_loading}
+              class="text-sm text-base-content/50 mt-2"
+            >
+              No models found matching "{@or_search}"
+            </p>
+          </div>
+
+          <div
+            :if={@embed_results != [] || @embed_search != ""}
+            class="mt-4 p-4 border border-secondary/20 bg-secondary/5 rounded-lg"
+          >
+            <h3 class="font-semibold mb-3">Browse Embedding Models</h3>
+            <p class="text-xs text-base-content/50 mb-2">
+              Embedding models from OpenRouter compatible with your configured providers.
+            </p>
+            <form phx-change="embed_search" class="relative">
+              <input
+                type="text"
+                name="embed_query"
+                value={@embed_search}
+                placeholder="Filter embedding models..."
+                class="input input-bordered input-sm w-full"
+                phx-debounce="100"
+                autocomplete="off"
+              />
+            </form>
+            <div
+              :if={@embed_results != []}
+              class="mt-2 max-h-64 overflow-y-auto border border-base-300 rounded-lg divide-y divide-base-300"
+            >
+              <button
+                :for={m <- @embed_results}
+                type="button"
+                phx-click="embed_select_model"
+                phx-value-model-id={m.id}
+                class="flex items-center justify-between w-full px-3 py-2 text-left hover:bg-base-200 transition-colors cursor-pointer"
+              >
+                <div>
+                  <div class="text-sm font-medium">{m.name}</div>
+                  <div class="text-xs text-base-content/50 font-mono">{m.id}</div>
+                </div>
+                <div class="text-right text-xs text-base-content/50 shrink-0 ml-2">
+                  <div :if={m[:dimensions]}>{m.dimensions}d</div>
+                  <div :if={m[:context_length] && !m[:dimensions]}>{m.context_length} ctx</div>
+                  <div :if={m.input_cost_per_million}>
+                    ${Decimal.round(m.input_cost_per_million, 2)}/M in
+                  </div>
+                </div>
+              </button>
+            </div>
+            <p
+              :if={@embed_search != "" && @embed_results == []}
+              class="text-sm text-base-content/50 mt-2"
+            >
+              No embedding models found matching "{@embed_search}"
+            </p>
+          </div>
+
           <div class="mt-4 p-4 border border-base-300 rounded-lg">
-            <h3 class="font-semibold mb-3">Add Model</h3>
+            <h3 class="font-semibold mb-3">Add Model Manually</h3>
             <.form for={@llm_model_form} phx-submit="setup_create_model" class="space-y-3">
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div class="form-control">
@@ -2298,7 +2427,7 @@ defmodule LiteskillWeb.AdminLive do
                   </select>
                 </div>
               </div>
-              <label class="label cursor-pointer gap-2 w-fit">
+              <label :if={!@single_user} class="label cursor-pointer gap-2 w-fit">
                 <input
                   type="checkbox"
                   name="llm_model[instance_wide]"
@@ -3094,11 +3223,166 @@ defmodule LiteskillWeb.AdminLive do
     end)
   end
 
+  # --- Setup Wizard: OpenRouter Model Search ---
+
+  def handle_event("or_search", %{"or_query" => query}, socket) do
+    require_admin(socket, fn ->
+      socket =
+        if is_nil(socket.assigns.or_models) do
+          case Liteskill.OpenRouter.Models.list_models() do
+            {:ok, models} ->
+              Phoenix.Component.assign(socket, or_models: models, or_loading: false)
+
+            {:error, _} ->
+              Phoenix.Component.assign(socket, or_models: [], or_loading: false)
+          end
+        else
+          socket
+        end
+
+      results =
+        if String.trim(query) == "" do
+          []
+        else
+          Liteskill.OpenRouter.Models.search_models(socket.assigns.or_models, query)
+        end
+
+      {:noreply, Phoenix.Component.assign(socket, or_search: query, or_results: results)}
+    end)
+  end
+
+  def handle_event("or_select_model", %{"model-id" => model_id}, socket) do
+    require_admin(socket, fn ->
+      user_id = socket.assigns.current_user.id
+
+      or_provider =
+        Enum.find(socket.assigns.setup_llm_providers, &(&1.provider_type == "openrouter"))
+
+      case Enum.find(socket.assigns.or_models || [], &(&1.id == model_id)) do
+        nil ->
+          {:noreply, Phoenix.Component.assign(socket, setup_error: "Model not found")}
+
+        model ->
+          attrs = %{
+            name: model.name,
+            model_id: model.id,
+            provider_id: or_provider.id,
+            model_type: model.model_type,
+            input_cost_per_million: model.input_cost_per_million,
+            output_cost_per_million: model.output_cost_per_million,
+            instance_wide: true,
+            status: "active",
+            user_id: user_id
+          }
+
+          case LlmModels.create_model(attrs) do
+            {:ok, _} ->
+              models = LlmModels.list_all_models()
+              embedding_models = LlmModels.list_all_active_models(model_type: "embedding")
+
+              {:noreply,
+               Phoenix.Component.assign(socket,
+                 setup_llm_models: models,
+                 setup_rag_embedding_models: embedding_models,
+                 or_search: "",
+                 or_results: [],
+                 setup_error: nil
+               )}
+
+            {:error, changeset} ->
+              {:noreply,
+               Phoenix.Component.assign(socket,
+                 setup_error: action_error("add model", changeset)
+               )}
+          end
+      end
+    end)
+  end
+
+  # --- Setup Wizard: Embedding Catalog ---
+
+  def handle_event("embed_search", %{"embed_query" => query}, socket) do
+    require_admin(socket, fn ->
+      embed_models = socket.assigns.embed_results_all
+
+      results =
+        if String.trim(query) == "" do
+          embed_models
+        else
+          Liteskill.EmbeddingCatalog.search_models(embed_models, query)
+        end
+
+      {:noreply, Phoenix.Component.assign(socket, embed_search: query, embed_results: results)}
+    end)
+  end
+
+  def handle_event("embed_select_model", %{"model-id" => model_id}, socket) do
+    require_admin(socket, fn ->
+      user_id = socket.assigns.current_user.id
+      providers = socket.assigns.setup_llm_providers
+
+      case Enum.find(socket.assigns.embed_results_all, &(&1.id == model_id)) do
+        nil ->
+          {:noreply, Phoenix.Component.assign(socket, setup_error: "Model not found")}
+
+        model ->
+          case Liteskill.EmbeddingCatalog.resolve_provider(model, providers) do
+            :error ->
+              {:noreply,
+               Phoenix.Component.assign(socket,
+                 setup_error: "No compatible provider configured for this model"
+               )}
+
+            {:ok, provider_id} ->
+              attrs = %{
+                name: model.name,
+                model_id: model.id,
+                provider_id: provider_id,
+                model_type: "embedding",
+                input_cost_per_million: model.input_cost_per_million,
+                output_cost_per_million: model.output_cost_per_million,
+                instance_wide: true,
+                status: "active",
+                user_id: user_id
+              }
+
+              case LlmModels.create_model(attrs) do
+                {:ok, _} ->
+                  models = LlmModels.list_all_models()
+                  embedding_models = LlmModels.list_all_active_models(model_type: "embedding")
+
+                  {:noreply,
+                   Phoenix.Component.assign(socket,
+                     setup_llm_models: models,
+                     setup_rag_embedding_models: embedding_models,
+                     embed_search: "",
+                     embed_results: socket.assigns.embed_results_all,
+                     setup_error: nil
+                   )}
+
+                {:error, changeset} ->
+                  {:noreply,
+                   Phoenix.Component.assign(socket,
+                     setup_error: action_error("add embedding model", changeset)
+                   )}
+              end
+          end
+      end
+    end)
+  end
+
   # --- Setup Wizard: Models ---
 
   def handle_event("setup_create_model", %{"llm_model" => params}, socket) do
     require_admin(socket, fn ->
       user_id = socket.assigns.current_user.id
+
+      params =
+        if socket.assigns.single_user_mode do
+          Map.merge(params, %{"instance_wide" => "true", "status" => "active"})
+        else
+          params
+        end
 
       case build_model_attrs(params, user_id) do
         {:ok, attrs} ->
@@ -4055,6 +4339,19 @@ defmodule LiteskillWeb.AdminLive do
         end
       end
     end)
+  end
+
+  defp load_embed_models(socket) do
+    providers = socket.assigns.setup_llm_providers
+    models = fetch_embed_models(providers)
+    Phoenix.Component.assign(socket, embed_results_all: models, embed_results: models)
+  end
+
+  defp fetch_embed_models(providers) do
+    provider_types = Enum.map(providers, & &1.provider_type)
+
+    Liteskill.EmbeddingCatalog.fetch_models()
+    |> Liteskill.EmbeddingCatalog.filter_for_providers(provider_types)
   end
 
   defp ensure_source_exists(source, user_id, acc) do

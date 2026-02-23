@@ -1193,6 +1193,12 @@ defmodule LiteskillWeb.ChatLive do
             rag_confirm_input={@rag_confirm_input}
             rag_selected_model_id={@rag_selected_model_id}
             rag_reembed_in_progress={@rag_reembed_in_progress}
+            or_search={@or_search}
+            or_results={@or_results}
+            or_loading={@or_loading}
+            embed_results_all={@embed_results_all}
+            embed_search={@embed_search}
+            embed_results={@embed_results}
           />
         <% end %>
         <%= if @settings_mode and @live_action == :settings_account do %>
@@ -1264,6 +1270,12 @@ defmodule LiteskillWeb.ChatLive do
             rag_confirm_input={@rag_confirm_input}
             rag_selected_model_id={@rag_selected_model_id}
             rag_reembed_in_progress={@rag_reembed_in_progress}
+            or_search={@or_search}
+            or_results={@or_results}
+            or_loading={@or_loading}
+            embed_results_all={@embed_results_all}
+            embed_search={@embed_search}
+            embed_results={@embed_results}
             settings_mode={true}
             settings_action={@live_action}
           />
@@ -3088,6 +3100,8 @@ defmodule LiteskillWeb.ChatLive do
     setup_select_embedding setup_rag_skip
     setup_toggle_source setup_save_sources
     setup_save_config setup_skip_config setup_skip_sources
+    or_search or_select_model
+    embed_search embed_select_model
     rag_select_model rag_cancel_change rag_confirm_input_change rag_confirm_model_change)
 
   def handle_event(event, params, socket) when event in @admin_events do

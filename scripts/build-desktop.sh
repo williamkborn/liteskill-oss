@@ -150,6 +150,12 @@ fi
 # Phase 6: Build Tauri app
 # ---------------------------------------------------------------------------
 log "Building Tauri app..."
+
+# Sync Tauri version from the project VERSION file
+APP_VERSION="$(cat "$PROJECT_ROOT/VERSION" | tr -d '[:space:]')"
+log "Setting Tauri version to $APP_VERSION"
+sed -i "s/\"version\": \".*\"/\"version\": \"$APP_VERSION\"/" "$PROJECT_ROOT/src-tauri/tauri.conf.json"
+
 cd "$PROJECT_ROOT/src-tauri"
 cargo tauri build
 cd "$PROJECT_ROOT"

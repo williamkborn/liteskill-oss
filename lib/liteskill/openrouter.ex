@@ -1,5 +1,5 @@
 defmodule Liteskill.OpenRouter do
-  use Boundary, top_level?: true, deps: [], exports: [StateStore]
+  use Boundary, top_level?: true, deps: [], exports: [StateStore, Models]
 
   @moduledoc """
   OpenRouter OAuth PKCE flow — generate challenges and exchange authorization codes for API keys.
