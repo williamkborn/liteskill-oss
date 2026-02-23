@@ -119,7 +119,17 @@ mix local.rebar --force
 mix deps.get --only prod
 npm install --prefix assets
 mix compile
-mix assets.deploy
+
+# Run assets.deploy steps individually to skip gen.jr_prompt if missing.
+# The prompt file (priv/json_render_prompt.txt) persists across builds.
+if mix help gen.jr_prompt >/dev/null 2>&1; then
+  mix gen.jr_prompt
+else
+  log "Skipping gen.jr_prompt (task not available)"
+fi
+mix tailwind liteskill --minify
+mix esbuild liteskill --minify
+mix phx.digest
 
 # ---------------------------------------------------------------------------
 # Phase 4: Burrito release
@@ -154,7 +164,10 @@ log "Building Tauri app..."
 # Sync Tauri version from the project VERSION file
 APP_VERSION="$(cat "$PROJECT_ROOT/VERSION" | tr -d '[:space:]')"
 log "Setting Tauri version to $APP_VERSION"
-sed -i "s/\"version\": \".*\"/\"version\": \"$APP_VERSION\"/" "$PROJECT_ROOT/src-tauri/tauri.conf.json"
+# sed -i behaves differently on macOS (BSD) vs Linux (GNU).
+# Using .bak suffix works on both, then remove the backup.
+sed -i.bak "s/\"version\": \".*\"/\"version\": \"$APP_VERSION\"/" "$PROJECT_ROOT/src-tauri/tauri.conf.json"
+rm -f "$PROJECT_ROOT/src-tauri/tauri.conf.json.bak"
 
 cd "$PROJECT_ROOT/src-tauri"
 cargo tauri build
@@ -185,8 +198,30 @@ case "$TRIPLE" in
     fi
     ;;
   *-apple-darwin)
-    # macOS: nothing to post-process (Tauri produces a .app and .dmg)
-    log "macOS build complete (no post-processing needed)"
+    APP_BUNDLE=$(find src-tauri/target/release/bundle/macos -name '*.app' -print -quit 2>/dev/null || true)
+    if [ -n "$APP_BUNDLE" ]; then
+      # Ad-hoc sign the entire bundle (Tauri only linker-signs the binary;
+      # Finder requires a proper codesign signature to launch apps).
+      log "Signing app bundle..."
+      codesign --force --deep --sign - "$APP_BUNDLE"
+
+      # Create DMG for distribution
+      APP_NAME="$(basename "$APP_BUNDLE" .app)"
+      VERSION="$(cat VERSION | tr -d '[:space:]')"
+      ARCH="${TRIPLE%%-*}"
+      DMG_NAME="${APP_NAME}_${VERSION}_${ARCH}.dmg"
+      DMG_DIR="$(dirname "$APP_BUNDLE")"
+
+      log "Creating DMG: $DMG_NAME"
+      hdiutil create \
+        -volname "$APP_NAME" \
+        -srcfolder "$APP_BUNDLE" \
+        -ov -format UDZO \
+        "$DMG_DIR/$DMG_NAME"
+      log "DMG created at $DMG_DIR/$DMG_NAME"
+    else
+      log "WARNING: No .app bundle found, skipping sign+DMG"
+    fi
     ;;
 esac
 

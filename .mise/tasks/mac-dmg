@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+#MISE description="Build macOS .app + .dmg (full pipeline)"
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+TRIPLE="aarch64-apple-darwin"
+BURRITO_TARGET="macos_aarch64"
+
+log() { echo "==> [mac-dmg] $*"; }
+
+cd "$PROJECT_ROOT"
+
+# ---------------------------------------------------------------------------
+# Phase 1: Fetch PostgreSQL (skip if cached)
+# ---------------------------------------------------------------------------
+if [ -f "priv/postgres/$TRIPLE/bin/initdb" ]; then
+  log "PostgreSQL binaries cached, skipping fetch"
+else
+  log "Fetching PostgreSQL binaries..."
+  bash scripts/fetch-postgres.sh "$TRIPLE"
+fi
+
+# ---------------------------------------------------------------------------
+# Phase 2: Elixir compile + assets
+# ---------------------------------------------------------------------------
+log "Compiling Elixir..."
+MIX_ENV=prod mix deps.get --only prod
+npm install --prefix assets
+MIX_ENV=prod mix compile
+
+# Run assets.deploy steps individually to skip gen.jr_prompt if missing.
+# The prompt file (priv/json_render_prompt.txt) persists across builds.
+log "Building assets..."
+if MIX_ENV=prod mix help gen.jr_prompt >/dev/null 2>&1; then
+  MIX_ENV=prod mix gen.jr_prompt
+fi
+MIX_ENV=prod mix tailwind liteskill --minify
+MIX_ENV=prod mix esbuild liteskill --minify
+MIX_ENV=prod mix phx.digest
+
+# ---------------------------------------------------------------------------
+# Phase 3: Burrito release
+# ---------------------------------------------------------------------------
+log "Building Burrito release..."
+# Clear corrupt ERTS cache if bin/ is empty
+for d in /var/folders/*/*/T/unpacked_erts_*/*/erts-*/bin; do
+  if [ -d "$d" ] && [ -z "$(ls -A "$d" 2>/dev/null)" ]; then
+    log "Clearing corrupt ERTS cache: $(dirname "$(dirname "$(dirname "$d")")")"
+    rm -rf "$(dirname "$(dirname "$(dirname "$d")")")"
+  fi
+done
+
+MIX_ENV=prod BURRITO_TARGET="$BURRITO_TARGET" mix release desktop --overwrite
+
+# Rename for Tauri sidecar naming
+BURRITO_OUT="burrito_out/desktop_${BURRITO_TARGET}"
+SIDECAR_NAME="burrito_out/desktop-${TRIPLE}"
+if [ -f "$BURRITO_OUT" ]; then
+  cp "$BURRITO_OUT" "$SIDECAR_NAME"
+  log "Sidecar: $SIDECAR_NAME"
+else
+  echo "ERROR: Burrito output not found at $BURRITO_OUT" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Phase 4: Tauri build
+# ---------------------------------------------------------------------------
+log "Building Tauri app..."
+cd src-tauri
+cargo tauri build
+cd "$PROJECT_ROOT"
+
+# ---------------------------------------------------------------------------
+# Phase 5: Sign + DMG
+# ---------------------------------------------------------------------------
+APP_BUNDLE="src-tauri/target/release/bundle/macos/Liteskill.app"
+if [ ! -d "$APP_BUNDLE" ]; then
+  echo "ERROR: .app bundle not found" >&2
+  exit 1
+fi
+
+log "Signing app bundle..."
+codesign --force --deep --sign - "$APP_BUNDLE"
+
+VERSION="$(cat VERSION | tr -d '[:space:]')"
+DMG_NAME="Liteskill_${VERSION}_aarch64.dmg"
+DMG_DIR="src-tauri/target/release/bundle/macos"
+
+log "Creating DMG: $DMG_NAME"
+hdiutil create \
+  -volname "Liteskill" \
+  -srcfolder "$APP_BUNDLE" \
+  -ov -format UDZO \
+  "$DMG_DIR/$DMG_NAME"
+
+log "Done! $DMG_DIR/$DMG_NAME"
+ls -lh "$DMG_DIR/$DMG_NAME"

@@ -112,9 +112,78 @@ jobs:
           path: src-tauri/target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
 
+  build-macos:
+    name: Build macOS ARM64
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Erlang, Elixir & PostgreSQL
+        run: |
+          brew install erlang elixir postgresql@18
+          echo "$(brew --prefix erlang)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix elixir)/bin" >> "$GITHUB_PATH"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin
+          key: cargo-bin-macos-tauri-cli-v2
+
+      - name: Install Tauri CLI
+        run: command -v cargo-tauri || cargo install tauri-cli
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Zig (required by Burrito)
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Cache PostgreSQL binaries
+        id: pg-cache
+        uses: actions/cache@v4
+        with:
+          path: priv/postgres/aarch64-apple-darwin
+          key: pg-aarch64-apple-darwin-${{ hashFiles('scripts/fetch-postgres.sh') }}-v2
+
+      - name: Cache Elixir deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ hashFiles('mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-
+
+      - name: Cache Rust target
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build Desktop App
+        run: bash scripts/build-desktop.sh aarch64-apple-darwin
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-aarch64-apple-darwin
+          path: src-tauri/target/release/bundle/macos/*.dmg
+          if-no-files-found: error
+
   release:
     name: Create Release
-    needs: build-linux
+    needs: [build-linux, build-macos]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
 
